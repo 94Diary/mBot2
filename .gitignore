@@ -1,0 +1,8 @@
+# colcon build output (generated, ไม่ใช่ source code)
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.pyc
