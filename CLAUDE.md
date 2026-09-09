@@ -30,7 +30,7 @@
 |---|---|---|
 | Ultrasonic (จุดเดียว, 5-300cm) | `/ultrasonic/scan` | `sensor_msgs/LaserScan` (ใช้แค่ `ranges[0]`) |
 | IMU (gyro/accel บน CyberPi) | `/imu` | `sensor_msgs/Imu` |
-| Quad RGB ×4 (กล้อง 1x1 พิกเซล ใต้ท้อง) | `/quad_rgb/1-4/image` | `sensor_msgs/Image` |
+| Quad RGB ×4 (กล้อง 1x1 พิกเซล ใต้ท้อง) | `/quad_rgb_1/image` ... `/quad_rgb_4/image` | `sensor_msgs/Image` |
 | ขับเคลื่อน (diff-drive) | `/cmd_vel` (สั่งเข้า), `/odom` (อ่านออก) | `Twist`, `Odometry` |
 
 ### `mbot2_control/` — โค้ดควบคุม (ament_python package)
@@ -57,6 +57,8 @@ ros2 run mbot2_control maze_solver
 4. **Gazebo Fortress ไม่มีปุ่ม resize/scale วัตถุใน GUI** (มีแค่ translate/rotate) ต้องแก้ขนาดใน SDF ไฟล์โดยตรง
 5. **ผู้ใช้เป็นมือใหม่มาก** ต้องอธิบายละเอียด ทีละขั้น เป็นภาษาไทย ไม่ข้ามขั้นตอน ระวังเรื่อง `source install/setup.bash` ที่ต้องรันทุกเทอร์มินัลใหม่ (ลืมบ่อย)
 6. **`<camera>` sensor ใน Gazebo Fortress ต้องตั้งค่า `<clip><far>` ไม่ต่ำกว่า 0.1 เมตร** ไม่งั้น Gazebo อ่าน SDF ทั้งไฟล์ไม่ผ่าน (error `The value [x] is less than the minimum allowed value of [0.1] for key [far]` ลามจน spawn หุ่นไม่ได้เลย) — เจอตอนทำ Quad RGB sensor (กล้อง 1x1 พิกเซลมองพื้นใกล้ๆ) ที่ตอนแรกตั้ง `far` ไว้ 0.05 เพราะคิดว่าเซนเซอร์อยู่ใกล้พื้นแค่ ~2 ซม. → แก้โดยตั้ง `far` เป็น 0.15 แทน (ยังมองเห็นพื้นที่ระยะจริงได้ตามปกติ ค่า near/far แค่กำหนดช่วงมองเห็น ไม่ใช่ระยะที่ต้องอยู่พอดี)
+7. **`<include><uri>` แบบ relative path ใน world .sdf ใช้ path เทียบกับ CWD ตอนสั่งคำสั่ง ไม่ใช่เทียบกับตำแหน่งไฟล์ world เอง** พอเรียกผ่าน `ros2 launch` (CWD คนละที่กับ `worlds/`) จะหาไฟล์ไม่เจอ (error `Unable to find uri[...]`) → แก้ด้วยการตั้ง env var `SDF_PATH` ชี้ไปที่โฟลเดอร์ `worlds/` ผ่าน `SetEnvironmentVariable` ใน `gz_sim.launch.py` (ตั้งค่านี้ก่อน include gz_sim เสมอ)
+8. **ชื่อ ROS 2 topic ห้ามมี segment ที่ขึ้นต้นด้วยตัวเลข** (เช่น `/quad_rgb/1/image` ผิดกฎ เพราะส่วน `1` ขึ้นต้นด้วยเลข) — `create_subscription`/`create_publisher` จะโยน `InvalidTopicNameException` ทันที และฝั่ง `ros_gz_bridge` จะแค่ขึ้น `WARN: Failed to create a bridge...` เงียบๆ ไม่ใช่ error แดงเห็นชัด (คนละแบบกับ error สีแดงที่เจอบ่อยๆ) ทำให้เข้าใจผิดว่าไม่เป็นไรได้ง่ายมาก ต้องเช็ค WARN พวกนี้ให้ดีด้วย → ตั้งชื่อ topic เป็น `/quad_rgb_1/image` (เลขติดกับคำก่อนหน้าด้วย `_` แทนการขึ้น segment ใหม่) แทน
 
 ## Toolchain เฉพาะโปรเจกต์นี้
 - `xacro` แปลง `.urdf.xacro` → `.urdf`

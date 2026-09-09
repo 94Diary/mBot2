@@ -310,7 +310,7 @@
       <sensor name="quad_rgb_${idx}_sensor" type="camera">
         <!-- pitch +90deg: rotates the sensor's forward (+x) axis to point straight down (-z) -->
         <pose>0 0 0 0 1.5707963 0</pose>
-        <topic>quad_rgb/${idx}/image</topic>
+        <topic>quad_rgb_${idx}/image</topic>
         <update_rate>15</update_rate>
         <always_on>true</always_on>
         <visualize>false</visualize>
