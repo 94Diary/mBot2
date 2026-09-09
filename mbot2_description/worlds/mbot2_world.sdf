@@ -70,5 +70,12 @@
       </link>
     </model>
 
+    <!-- Test platform + line track: defined separately in test_platform.sdf -->
+    <!-- so it can be found/edited without scrolling through this file.      -->
+    <include>
+      <uri>test_platform.sdf</uri>
+      <pose>0 0 0 0 0 0</pose>
+    </include>
+
   </world>
 </sdf>

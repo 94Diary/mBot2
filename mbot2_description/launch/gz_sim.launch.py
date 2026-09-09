@@ -2,7 +2,7 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription
+from launch.actions import IncludeLaunchDescription, SetEnvironmentVariable
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command
 from launch_ros.actions import Node
@@ -20,6 +20,12 @@ def generate_launch_description():
     # robot_description as yaml" ที่เกิดกับ launch_ros เวอร์ชันใหม่ๆ
     robot_description = ParameterValue(
         Command(['xacro ', xacro_file]), value_type=str)
+
+    # Lets <include><uri>...</uri></include> tags in world SDF files (e.g.
+    # test_platform.sdf) resolve by filename alone, regardless of the
+    # directory ros2 launch was run from.
+    set_sdf_path = SetEnvironmentVariable(
+        'SDF_PATH', os.path.join(pkg_share, 'worlds'))
 
     # Start Gazebo Sim (Fortress) with our world
     gz_sim = IncludeLaunchDescription(
@@ -46,7 +52,7 @@ def generate_launch_description():
         package='ros_gz_sim',
         executable='create',
         output='screen',
-        arguments=['-topic', 'robot_description', '-name', 'mbot2', '-z', '0.05'],
+        arguments=['-topic', 'robot_description', '-name', 'mbot2', '-z', '0.06'],
     )
 
     # Bridge ROS 2 <-> Gazebo Sim topics
@@ -69,6 +75,7 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        set_sdf_path,
         gz_sim,
         robot_state_publisher,
         spawn_entity,
