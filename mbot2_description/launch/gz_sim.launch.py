@@ -61,6 +61,10 @@ def generate_launch_description():
             '/joint_states@sensor_msgs/msg/JointState[ignition.msgs.Model',
             '/ultrasonic/scan@sensor_msgs/msg/LaserScan[ignition.msgs.LaserScan',
             '/imu@sensor_msgs/msg/Imu[ignition.msgs.IMU',
+            '/quad_rgb/1/image@sensor_msgs/msg/Image[ignition.msgs.Image',
+            '/quad_rgb/2/image@sensor_msgs/msg/Image[ignition.msgs.Image',
+            '/quad_rgb/3/image@sensor_msgs/msg/Image[ignition.msgs.Image',
+            '/quad_rgb/4/image@sensor_msgs/msg/Image[ignition.msgs.Image',
         ],
     )
 

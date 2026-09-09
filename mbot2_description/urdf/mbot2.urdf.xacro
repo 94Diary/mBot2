@@ -38,6 +38,21 @@
   <xacro:property name="us_height" value="0.020"/>
   <xacro:property name="us_mass"   value="0.01"/>
 
+  <!-- Front sensor mount plate: extends past the chassis + caster so the -->
+  <!-- Quad RGB array can see the ground ahead of every wheel -->
+  <xacro:property name="mount_length"    value="0.03"/>
+  <xacro:property name="mount_width"     value="0.075"/>
+  <xacro:property name="mount_thickness" value="0.003"/>
+  <xacro:property name="mount_x" value="${chassis_length/2 + mount_length/2}"/>
+
+  <!-- Quad RGB color sensor array, underside of the front mount plate -->
+  <xacro:property name="qrgb_size" value="0.008"/>
+  <xacro:property name="qrgb_height" value="0.004"/>
+  <xacro:property name="qrgb_mass"   value="0.001"/>
+  <xacro:property name="qrgb_x" value="${chassis_length/2 + mount_length - 0.01}"/>
+  <xacro:property name="qrgb_z" value="${wheel_radius - qrgb_height/2}"/>
+  <xacro:property name="mount_z" value="${qrgb_z + qrgb_height/2 + mount_thickness/2}"/>
+
   <!-- Colors -->
   <material name="mbot_blue">
     <color rgba="0.05 0.35 0.75 1.0"/>
@@ -241,6 +256,85 @@
     <mu1>0.001</mu1>
     <mu2>0.001</mu2>
   </gazebo>
+
+  <!-- ============================================================ -->
+  <!-- Front sensor mount plate (cosmetic, no collision) — carries   -->
+  <!-- the Quad RGB array out past the caster so the sensors see the -->
+  <!-- ground ahead of every wheel, same as a real line-follower.    -->
+  <!-- ============================================================ -->
+  <link name="sensor_mount_link">
+    <visual>
+      <geometry>
+        <box size="${mount_length} ${mount_width} ${mount_thickness}"/>
+      </geometry>
+      <material name="mbot_dark_grey"/>
+    </visual>
+    <inertial>
+      <mass value="0.002"/>
+      <inertia ixx="1e-8" ixy="0" ixz="0" iyy="1e-8" iyz="0" izz="1e-8"/>
+    </inertial>
+  </link>
+
+  <joint name="sensor_mount_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="sensor_mount_link"/>
+    <origin xyz="${mount_x} 0 ${mount_z}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ============================================================ -->
+  <!-- Quad RGB color sensor array (4x), underside of the chassis    -->
+  <!-- Each unit is modeled as a 1x1 pixel downward-facing camera,   -->
+  <!-- matching the real Quad RGB module's per-channel color read.   -->
+  <!-- ============================================================ -->
+  <xacro:macro name="quad_rgb_unit" params="idx y_off">
+    <link name="quad_rgb_${idx}_link">
+      <visual>
+        <geometry>
+          <box size="${qrgb_size} ${qrgb_size} ${qrgb_height}"/>
+        </geometry>
+        <material name="mbot_black"/>
+      </visual>
+      <inertial>
+        <mass value="${qrgb_mass}"/>
+        <inertia ixx="1e-8" ixy="0" ixz="0" iyy="1e-8" iyz="0" izz="1e-8"/>
+      </inertial>
+    </link>
+
+    <joint name="quad_rgb_${idx}_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="quad_rgb_${idx}_link"/>
+      <origin xyz="${qrgb_x} ${y_off} ${qrgb_z}" rpy="0 0 0"/>
+    </joint>
+
+    <gazebo reference="quad_rgb_${idx}_link">
+      <sensor name="quad_rgb_${idx}_sensor" type="camera">
+        <!-- pitch +90deg: rotates the sensor's forward (+x) axis to point straight down (-z) -->
+        <pose>0 0 0 0 1.5707963 0</pose>
+        <topic>quad_rgb/${idx}/image</topic>
+        <update_rate>15</update_rate>
+        <always_on>true</always_on>
+        <visualize>false</visualize>
+        <camera>
+          <horizontal_fov>0.5</horizontal_fov>
+          <image>
+            <width>1</width>
+            <height>1</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <!-- far must be >= 0.1 (Gazebo Fortress camera clip minimum) -->
+            <near>0.01</near>
+            <far>0.15</far>
+          </clip>
+        </camera>
+      </sensor>
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:quad_rgb_unit idx="1" y_off="0.030"/>
+  <xacro:quad_rgb_unit idx="2" y_off="0.010"/>
+  <xacro:quad_rgb_unit idx="3" y_off="-0.010"/>
+  <xacro:quad_rgb_unit idx="4" y_off="-0.030"/>
 
   <!-- ============================================================ -->
   <!-- Ultrasonic distance sensor (functional)                       -->
