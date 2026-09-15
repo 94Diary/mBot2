@@ -4,7 +4,11 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 
-from mbot2_control.modules import QuadRGBArray, WheelEncoder
+from mbot2_control.modules import (
+    QuadRGBArray,
+    UltrasonicSensor,
+    WheelEncoder,
+)
 
 # ความเร็ว/มุมเลี้ยวพื้นฐาน (ปรับตัวเลขพวกนี้เพื่อจูนพฤติกรรมได้เลย)
 FORWARD_SPEED = 0.15
@@ -16,6 +20,9 @@ TURN_GAIN = 0.15               # ยิ่งมาก ยิ่งเลี้�
 MAX_TURN = 0.5                 # เพดานความเร็วเลี้ยว กันหมุนแรงเกินไป
 
 SEARCH_TURN_SPEED = 0.4        # ความแรงตอนหมุนหาเส้นที่หายไป
+
+# หยุดเมื่อ Ultrasonic พบวัตถุด้านหน้าใกล้กว่าหรือเท่ากับระยะนี้
+OBSTACLE_STOP_DISTANCE_M = 0.25
 
 # ชื่อสถานะ ใช้ string ธรรมดาให้อ่าน log ง่าย
 STATE_SEARCH = 'SEARCH'                # ยังไม่เคยเจอเส้นเลย เดินตรงไปเรื่อยๆ
@@ -34,15 +41,38 @@ class MazeSolver(Node):
 
         # ดึงตัวช่วยอ่านเซนเซอร์ + encoder มาจาก modules/ (ไม่ต้องเขียน subscriber เองในนี้)
         self.sensors = QuadRGBArray(self)
+        self.ultrasonic = UltrasonicSensor(self)
         self.encoder = WheelEncoder(self)  # ยังไม่ได้ใช้ตัดสินใจตอนนี้ เก็บไว้ต่อยอด
 
         self.state = STATE_SEARCH
         self.state_start_time = time.time()
+        self.obstacle_stop_start = None
 
         self.get_logger().info(f'เริ่มทำงาน สถานะ: {self.state}')
+        self.get_logger().info(
+            'Ultrasonic จะหยุดหุ่นเมื่อพบวัตถุในระยะ '
+            f'{OBSTACLE_STOP_DISTANCE_M:.2f} เมตร')
 
     def tick(self):
         cmd = Twist()
+
+        # ให้ความปลอดภัยจาก Ultrasonic มาก่อนการเดินตามเส้นทุกสถานะ
+        if self.ultrasonic.obstacle_ahead(OBSTACLE_STOP_DISTANCE_M):
+            if self.obstacle_stop_start is None:
+                self.obstacle_stop_start = time.time()
+                self.get_logger().warning(
+                    'พบสิ่งกีดขวางด้านหน้า '
+                    f'{self.ultrasonic.distance_m:.2f} เมตร: หยุดหุ่น')
+
+            self.cmd_pub.publish(cmd)
+            return
+
+        if self.obstacle_stop_start is not None:
+            stopped_duration = time.time() - self.obstacle_stop_start
+            self.state_start_time += stopped_duration
+            self.obstacle_stop_start = None
+            self.get_logger().info(
+                'ทางด้านหน้าโล่งแล้ว: ทำงานตามเส้นต่อ')
 
         if self.state == STATE_SEARCH:
             # ยังไม่เจอเส้น: เดินตรงไปเรื่อยๆ
@@ -112,7 +142,8 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':
