@@ -1,0 +1,156 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <world name="GoogleMaps_Troll_Maze">
+    
+    <!-- แสงสว่างจัดเต็ม ให้เซนเซอร์กล้องจับสีได้ชัดเจน -->
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>1.0 1.0 1.0 1</diffuse>
+      <specular>0.5 0.5 0.5 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <!-- พื้นสีขาว ขยายขนาดเป็น 40x40 เมตร (กว้างสะใจ) -->
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision"><geometry><plane><normal>0 0 1</normal><size>40 40</size></plane></geometry></collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>40 40</size></plane></geometry>
+          <material><ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ================= สนาม Line Tracking (ต่อกันเนียน 100% ไม่มีเส้นลอย) ================= -->
+    <model name="pro_street_lines">
+      <static>true</static>
+      <link name="track_link">
+
+        <!-- พื้นหลังสีเทาบางๆ ไว้ตรงจุด Start ตามต้นฉบับ -->
+        <visual name="bg_grey">
+          <pose>-15 15 0.0005 0 0 0</pose>
+          <geometry><box><size>4.0 4.0 0.0005</size></box></geometry>
+          <material><ambient>0.9 0.9 0.9 1</ambient><diffuse>0.9 0.9 0.9 1</diffuse></material>
+        </visual>
+
+        <!-- ================= จุดเริ่มต้น (START) ================= -->
+        <visual name="start_plate">
+          <pose>-15.0 15.0 0.001 0 0 0</pose>
+          <geometry><box><size>0.4 0.4 0.001</size></box></geometry>
+          <material><ambient>1 0.8 0 1</ambient><diffuse>1 0.8 0 1</diffuse></material>
+        </visual>
+
+        <!-- เส้นทางหลัก 1 -->
+        <visual name="t1"><pose>-12.5 15.0 0.001 0 0 0</pose><geometry><box><size>5.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+
+        <!-- ================= ซอยหลอก 1 (สวรรค์ชั้น 7 - วิ่งยาวๆ แล้วตัน) ================= -->
+        <visual name="d1_1"><pose>0.0 15.0 0.001 0 0 0</pose><geometry><box><size>20.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="d1_2"><pose>10.0 16.5 0.001 0 0 1.570796</pose><geometry><box><size>3.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="d1_3"><pose>14.0 18.0 0.001 0 0 0</pose><geometry><box><size>8.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="d1_4"><pose>18.0 11.5 0.001 0 0 1.570796</pose><geometry><box><size>13.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="d1_5"><pose>15.0 5.0 0.001 0 0 0</pose><geometry><box><size>6.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="d1_6"><pose>12.0 6.5 0.001 0 0 1.570796</pose><geometry><box><size>3.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="d1_7_red"><pose>12.0 8.5 0.001 0 0 1.570796</pose><geometry><box><size>1.0 0.05 0.001</size></box></geometry><material><ambient>1 0 0 1</ambient><diffuse>1 0 0 1</diffuse></material></visual> <!-- ทางตันสีแดง -->
+
+        <!-- ================= เส้นทางหลัก 2 & แถบสี (Color Bar Test) ================= -->
+        <visual name="cb_1"><pose>-10.0 13.5 0.001 0 0 1.570796</pose><geometry><box><size>3.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="cb_2"><pose>-10.0 11.0 0.001 0 0 1.570796</pose><geometry><box><size>2.0 0.05 0.001</size></box></geometry><material><ambient>0 0 1 1</ambient><diffuse>0 0 1 1</diffuse></material></visual> <!-- ฟ้า -->
+        <visual name="cb_3"><pose>-10.0 9.0 0.001 0 0 1.570796</pose><geometry><box><size>2.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="cb_4"><pose>-10.0 7.0 0.001 0 0 1.570796</pose><geometry><box><size>2.0 0.05 0.001</size></box></geometry><material><ambient>0 0.8 0 1</ambient><diffuse>0 0.8 0 1</diffuse></material></visual> <!-- เขียว -->
+        <visual name="cb_5"><pose>-10.0 5.0 0.001 0 0 1.570796</pose><geometry><box><size>2.0 0.05 0.001</size></box></geometry><material><ambient>1 0.8 0 1</ambient><diffuse>1 0.8 0 1</diffuse></material></visual> <!-- เหลือง -->
+        <visual name="cb_6"><pose>-10.0 3.0 0.001 0 0 1.570796</pose><geometry><box><size>2.0 0.05 0.001</size></box></geometry><material><ambient>1 0 0 1</ambient><diffuse>1 0 0 1</diffuse></material></visual> <!-- แดง -->
+        <visual name="cb_7"><pose>-10.0 1.0 0.001 0 0 1.570796</pose><geometry><box><size>2.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+
+        <!-- ================= ซอยหลอก 2 (วิ่งลงตะวันตกแล้วเข้าดงเขาวงกต) ================= -->
+        <visual name="d2_1"><pose>-14.0 0.0 0.001 0 0 0</pose><geometry><box><size>8.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="d2_2"><pose>-18.0 -6.0 0.001 0 0 1.570796</pose><geometry><box><size>12.0 0.05 0.001</size></box></geometry><material><ambient>0 0 1 1</ambient><diffuse>0 0 1 1</diffuse></material></visual> <!-- ฟ้า -->
+        <visual name="d2_3"><pose>-16.5 -12.0 0.001 0 0 0</pose><geometry><box><size>3.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="d2_4"><pose>-15.0 -13.5 0.001 0 0 1.570796</pose><geometry><box><size>3.0 0.05 0.001</size></box></geometry><material><ambient>1 0 0 1</ambient><diffuse>1 0 0 1</diffuse></material></visual> <!-- ทางตันสีแดง -->
+
+        <!-- ================= ซอยหลอก 3 (เส้นประหลอกดิ่งลงใต้) ================= -->
+        <visual name="d3_1"><pose>-10.0 -2.5 0.001 0 0 1.570796</pose><geometry><box><size>5.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="d3_d1"><pose>-10.0 -5.5 0.001 0 0 1.570796</pose><geometry><box><size>1.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="d3_d2"><pose>-10.0 -7.5 0.001 0 0 1.570796</pose><geometry><box><size>1.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="d3_d3"><pose>-10.0 -9.5 0.001 0 0 1.570796</pose><geometry><box><size>1.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="d3_d4"><pose>-10.0 -11.5 0.001 0 0 1.570796</pose><geometry><box><size>1.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="d3_d5"><pose>-10.0 -13.5 0.001 0 0 1.570796</pose><geometry><box><size>1.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="d3_d6"><pose>-10.0 -15.5 0.001 0 0 1.570796</pose><geometry><box><size>1.0 0.05 0.001</size></box></geometry><material><ambient>0 0 1 1</ambient><diffuse>0 0 1 1</diffuse></material></visual> <!-- ทางตันสีฟ้า -->
+
+        <!-- ================= ด่านเส้นประของจริง (มุ่งหน้าทิศตะวันออก) ================= -->
+        <visual name="t3_d1"><pose>-9.5 0.0 0.001 0 0 0</pose><geometry><box><size>1.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="t3_d2"><pose>-7.5 0.0 0.001 0 0 0</pose><geometry><box><size>1.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="t3_d3"><pose>-5.5 0.0 0.001 0 0 0</pose><geometry><box><size>1.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="t3_d4"><pose>-3.5 0.0 0.001 0 0 0</pose><geometry><box><size>1.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="t3_d5"><pose>-1.5 0.0 0.001 0 0 0</pose><geometry><box><size>1.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="t3_s1"><pose>-0.5 0.0 0.001 0 0 0</pose><geometry><box><size>1.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+
+        <!-- เส้นทางหลัก 4 ดันขึ้นเหนือ -->
+        <visual name="t4"><pose>0.0 2.5 0.001 0 0 1.570796</pose><geometry><box><size>5.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+
+        <!-- ================= ด่านซิกแซกตัวต้านทานมรณะ (ยาว 10 เมตร) ================= -->
+        <visual name="z1"><pose>0.5 5.5 0.001 0 0 0.785398</pose><geometry><box><size>1.414213 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="z2"><pose>1.5 5.5 0.001 0 0 -0.785398</pose><geometry><box><size>1.414213 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="z3"><pose>2.5 5.5 0.001 0 0 0.785398</pose><geometry><box><size>1.414213 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="z4"><pose>3.5 5.5 0.001 0 0 -0.785398</pose><geometry><box><size>1.414213 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="z5"><pose>4.5 5.5 0.001 0 0 0.785398</pose><geometry><box><size>1.414213 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="z6"><pose>5.5 5.5 0.001 0 0 -0.785398</pose><geometry><box><size>1.414213 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="z7"><pose>6.5 5.5 0.001 0 0 0.785398</pose><geometry><box><size>1.414213 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="z8"><pose>7.5 5.5 0.001 0 0 -0.785398</pose><geometry><box><size>1.414213 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="z9"><pose>8.5 5.5 0.001 0 0 0.785398</pose><geometry><box><size>1.414213 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="z10"><pose>9.5 5.5 0.001 0 0 -0.785398</pose><geometry><box><size>1.414213 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+
+        <!-- เส้นทางหลัก 6 ดิ่งลงใต้ -->
+        <visual name="t6"><pose>10.0 0.0 0.001 0 0 1.570796</pose><geometry><box><size>10.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+
+        <!-- ================= ซอยหลอก 4 (ฉีกออกขวา แล้วตัน) ================= -->
+        <visual name="d4_1"><pose>14.0 -5.0 0.001 0 0 0</pose><geometry><box><size>8.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="d4_2"><pose>18.0 -3.5 0.001 0 0 1.570796</pose><geometry><box><size>3.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="d4_3"><pose>16.5 -2.0 0.001 0 0 0</pose><geometry><box><size>3.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="d4_4"><pose>15.0 -1.0 0.001 0 0 1.570796</pose><geometry><box><size>2.0 0.05 0.001</size></box></geometry><material><ambient>1 0 0 1</ambient><diffuse>1 0 0 1</diffuse></material></visual> <!-- ทางตันสีแดง -->
+
+        <!-- เส้นทางหลัก 7 เตรียมเข้าวงเวียน -->
+        <visual name="t7"><pose>7.5 -5.0 0.001 0 0 0</pose><geometry><box><size>5.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+
+        <!-- ================= วงเวียนโดนัท และ ซอยหลอกเพียบ ================= -->
+        <visual name="donut_out">
+          <pose>3.0 -5.0 0.001 0 0 0</pose>
+          <geometry><cylinder><radius>2.0</radius><length>0.001</length></cylinder></geometry>
+          <material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material>
+        </visual>
+        <visual name="donut_in">
+          <pose>3.0 -5.0 0.002 0 0 0</pose>
+          <geometry><cylinder><radius>1.95</radius><length>0.001</length></cylinder></geometry>
+          <material><ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse></material>
+        </visual>
+        
+        <!-- ซอยหลอกชี้ขึ้นเหนือ (ฟ้า) -->
+        <visual name="d_n"><pose>3.0 -2.0 0.001 0 0 1.570796</pose><geometry><box><size>2.0 0.05 0.001</size></box></geometry><material><ambient>0 0 1 1</ambient><diffuse>0 0 1 1</diffuse></material></visual>
+        <!-- ซอยหลอกชี้ไปตะวันตก (เขียว) -->
+        <visual name="d_w1"><pose>-1.0 -5.0 0.001 0 0 0</pose><geometry><box><size>4.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="d_w2"><pose>-3.0 -3.5 0.001 0 0 1.570796</pose><geometry><box><size>3.0 0.05 0.001</size></box></geometry><material><ambient>0 0.8 0 1</ambient><diffuse>0 0.8 0 1</diffuse></material></visual>
+
+        <!-- เส้นทางหลัก 8 ลงใต้จากโดนัท -->
+        <visual name="t8"><pose>3.0 -11.0 0.001 0 0 1.570796</pose><geometry><box><size>8.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="t9_1"><pose>7.5 -15.0 0.001 0 0 0</pose><geometry><box><size>9.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+
+        <!-- ================= ซอยหลอก 5 (เจ็บใจสุด วิ่งย้อนกลับขึ้นไปหาซิกแซก) ================= -->
+        <visual name="d5_1"><pose>12.0 -8.5 0.001 0 0 1.570796</pose><geometry><box><size>13.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="d5_2"><pose>8.5 -2.0 0.001 0 0 0</pose><geometry><box><size>7.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="d5_3"><pose>5.0 -1.0 0.001 0 0 1.570796</pose><geometry><box><size>2.0 0.05 0.001</size></box></geometry><material><ambient>1 0.8 0 1</ambient><diffuse>1 0.8 0 1</diffuse></material></visual> <!-- ทางตันสีเหลือง -->
+
+        <!-- เส้นทางหลักเข้าเส้นชัย -->
+        <visual name="t9_2"><pose>13.5 -15.0 0.001 0 0 0</pose><geometry><box><size>3.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+
+        <!-- ================= จุด FINISH (สีเขียว) ================= -->
+        <visual name="finish_plate">
+          <pose>15.0 -15.0 0.001 0 0 0</pose>
+          <geometry><box><size>0.4 0.4 0.001</size></box></geometry>
+          <material><ambient>0 0.8 0 1</ambient><diffuse>0 0.8 0 1</diffuse></material>
+        </visual>
+
+      </link>
+    </model>
+  </world>
+</sdf>
