@@ -4,7 +4,8 @@ import math
 
 from sensor_msgs.msg import LaserScan
 
-TOPIC = '/ultrasonic/scan'
+# ชื่อไม่มี / นำหน้า เพื่อให้ ROS namespace ของหุ่นถูกเติมให้อัตโนมัติ
+TOPIC = 'ultrasonic/scan'
 
 
 def nearest_valid_range(msg: LaserScan):
