@@ -3,11 +3,12 @@
 from sensor_msgs.msg import Image
 
 # ลำดับเซนเซอร์ตามที่วางไว้ใน urdf: 1=ซ้ายสุด, 2=ซ้ายใน, 3=ขวาใน, 4=ขวาสุด
+# ชื่อไม่มี / นำหน้า เพื่อให้ ROS namespace ของหุ่นถูกเติมให้อัตโนมัติ
 TOPICS = [
-    '/quad_rgb_1/image',
-    '/quad_rgb_2/image',
-    '/quad_rgb_3/image',
-    '/quad_rgb_4/image',
+    'quad_rgb_1/image',
+    'quad_rgb_2/image',
+    'quad_rgb_3/image',
+    'quad_rgb_4/image',
 ]
 
 

@@ -36,7 +36,7 @@ class MazeSolver(Node):
     def __init__(self):
         super().__init__('maze_solver')
 
-        self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', 10)
         self.timer = self.create_timer(0.1, self.tick)
 
         # ดึงตัวช่วยอ่านเซนเซอร์ + encoder มาจาก modules/ (ไม่ต้องเขียน subscriber เองในนี้)
