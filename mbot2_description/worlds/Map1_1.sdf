@@ -1,0 +1,181 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <world name="Map_Exact_As_Drawn_ProMax">
+    
+    <!-- แสงสว่างจัดเต็ม -->
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>1.0 1.0 1.0 1</diffuse>
+      <specular>0.5 0.5 0.5 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <!-- พื้นสีขาว 15x15 เมตร -->
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision"><geometry><plane><normal>0 0 1</normal><size>15 15</size></plane></geometry></collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>15 15</size></plane></geometry>
+          <material><ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ================= สนามแข่งสร้างจากรูปวาด 100% ================= -->
+    <model name="drawn_track">
+      <static>true</static>
+      <link name="track_link">
+
+        <!-- แถบสีเทาด้านซ้าย -->
+        <visual name="bg_grey">
+          <pose>-1.5 -0.5 0.0005 0 0 0</pose>
+          <geometry><box><size>2.5 3.5 0.0005</size></box></geometry>
+          <material><ambient>0.9 0.9 0.9 1</ambient><diffuse>0.9 0.9 0.9 1</diffuse></material>
+        </visual>
+
+        <!-- ================= 1. โซนซ้าย (จุดเริ่มต้นสีเหลือง) ================= -->
+        <visual name="box_yellow">
+          <pose>-1 -1 0.001 0 0 0</pose>
+          <geometry><box><size>0.3 0.3 0.001</size></box></geometry>
+          <material><ambient>1 0.8 0 1</ambient><diffuse>1 0.8 0 1</diffuse></material>
+        </visual>
+        <visual name="left_h_line">
+          <pose>-1.75 -1 0.001 0 0 0</pose>
+          <geometry><box><size>1.5 0.05 0.001</size></box></geometry>
+          <material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material>
+        </visual>
+        <visual name="left_v_line_down">
+          <pose>-2.5 -1.5 0.001 0 0 0</pose>
+          <geometry><box><size>0.05 1.0 0.001</size></box></geometry>
+          <material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material>
+        </visual>
+        <visual name="left_v_line_up">
+          <pose>-2.5 -0.5 0.001 0 0 0</pose>
+          <geometry><box><size>0.05 1.0 0.001</size></box></geometry>
+          <material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material>
+        </visual>
+        <visual name="main_track_left">
+          <pose>-1.25 0 0.001 0 0 0</pose>
+          <geometry><box><size>2.5 0.05 0.001</size></box></geometry>
+          <material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material>
+        </visual>
+
+        <!-- ================= 2. แกนกลาง (น้ำเงิน -> เส้นประห่างๆ -> แดง -> เส้นประ -> เขียว) ================= -->
+        <visual name="line_blue">
+          <pose>0.5 0 0.001 0 0 0</pose>
+          <geometry><box><size>1.0 0.05 0.001</size></box></geometry>
+          <material><ambient>0 0 1 1</ambient><diffuse>0 0 1 1</diffuse></material>
+        </visual>
+        
+        <!-- !!! เส้นประแนวนอนแบบห่างๆ (แทนที่ซิกแซกเดิม) !!! -->
+        <visual name="dash_mid_1">
+          <pose>1.2 0 0.001 0 0 0</pose>
+          <geometry><box><size>0.1 0.05 0.001</size></box></geometry>
+          <material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material>
+        </visual>
+        <visual name="dash_mid_2">
+          <pose>1.5 0 0.001 0 0 0</pose>
+          <geometry><box><size>0.1 0.05 0.001</size></box></geometry>
+          <material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material>
+        </visual>
+        <visual name="dash_mid_3">
+          <pose>1.8 0 0.001 0 0 0</pose>
+          <geometry><box><size>0.1 0.05 0.001</size></box></geometry>
+          <material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material>
+        </visual>
+
+        <visual name="line_red">
+          <pose>2.5 0 0.001 0 0 0</pose>
+          <geometry><box><size>1.0 0.05 0.001</size></box></geometry>
+          <material><ambient>1 0 0 1</ambient><diffuse>1 0 0 1</diffuse></material>
+        </visual>
+
+        <!-- เส้นประ (Gap) ชุดขวา -->
+        <visual name="dash_1"><pose>3.15 0 0.001 0 0 0</pose><geometry><box><size>0.2 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="dash_2"><pose>3.5 0 0.001 0 0 0</pose><geometry><box><size>0.2 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="dash_3"><pose>3.85 0 0.001 0 0 0</pose><geometry><box><size>0.2 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="dash_4"><pose>4.2 0 0.001 0 0 0</pose><geometry><box><size>0.2 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="dash_5"><pose>4.7 0 0.001 0 0 0</pose><geometry><box><size>0.6 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+
+        <visual name="box_green">
+          <pose>5 0 0.001 0 0 0</pose>
+          <geometry><box><size>0.3 0.3 0.001</size></box></geometry>
+          <material><ambient>0 1 0 1</ambient><diffuse>0 1 0 1</diffuse></material>
+        </visual>
+
+        <!-- ================= 3. ลูปและกล่องโซนล่าง ================= -->
+        <visual name="bottom_loop_left"><pose>1 -0.75 0.001 0 0 0</pose><geometry><box><size>0.05 1.5 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="bottom_loop_bot"><pose>3 -1.5 0.001 0 0 0</pose><geometry><box><size>4.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="bottom_loop_right"><pose>5 -0.75 0.001 0 0 0</pose><geometry><box><size>0.05 1.5 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+
+        <!-- กล่องตารางด้านล่าง -->
+        <visual name="grid_down_1"><pose>3 -2.0 0.001 0 0 0</pose><geometry><box><size>0.05 1.0 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="grid_down_2"><pose>4 -1.25 0.001 0 0 0</pose><geometry><box><size>0.05 2.5 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="grid_down_3"><pose>5 -2.0 0.001 0 0 0</pose><geometry><box><size>0.05 1.0 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="grid_bot_edge"><pose>4 -2.5 0.001 0 0 0</pose><geometry><box><size>2.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+
+        <!-- ================= 4. โซนบน (อัปเกรดหยักรัวๆ ยาวๆ) ================= -->
+        <!-- เส้นตรงดันขึ้นก่อนเข้าโซนหยัก -->
+        <visual name="top_up_1">
+          <pose>4 0.25 0.001 0 0 0</pose>
+          <geometry><box><size>0.05 0.5 0.001</size></box></geometry>
+          <material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material>
+        </visual>
+
+        <!-- ตัวต้านทาน 11 จังหวะ หยักรัวๆ -->
+        <visual name="res_z1"><pose>3.9 0.55 0.001 0 0 2.6779</pose><geometry><box><size>0.224 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="res_z2"><pose>4.0 0.7 0.001 0 0 0.4636</pose><geometry><box><size>0.447 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="res_z3"><pose>4.0 0.9 0.001 0 0 2.6779</pose><geometry><box><size>0.447 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="res_z4"><pose>4.0 1.1 0.001 0 0 0.4636</pose><geometry><box><size>0.447 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="res_z5"><pose>4.0 1.3 0.001 0 0 2.6779</pose><geometry><box><size>0.447 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="res_z6"><pose>4.0 1.5 0.001 0 0 0.4636</pose><geometry><box><size>0.447 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="res_z7"><pose>4.0 1.7 0.001 0 0 2.6779</pose><geometry><box><size>0.447 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="res_z8"><pose>4.0 1.9 0.001 0 0 0.4636</pose><geometry><box><size>0.447 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="res_z9"><pose>4.0 2.1 0.001 0 0 2.6779</pose><geometry><box><size>0.447 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="res_z10"><pose>4.0 2.3 0.001 0 0 0.4636</pose><geometry><box><size>0.447 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="res_z11"><pose>4.1 2.45 0.001 0 0 2.6779</pose><geometry><box><size>0.224 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+
+        <!-- เส้นตรงวิ่งไปหาวงกลม -->
+        <visual name="top_up_2">
+          <pose>4 2.75 0.001 0 0 0</pose>
+          <geometry><box><size>0.05 0.5 0.001</size></box></geometry>
+          <material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material>
+        </visual>
+        <visual name="top_left_to_circle">
+          <pose>2.5 3 0.001 0 0 0</pose>
+          <geometry><box><size>3.0 0.05 0.001</size></box></geometry>
+          <material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material>
+        </visual>
+
+        <!-- วงกลมโดนัทเจาะรูตรงกลาง -->
+        <visual name="circle_outer">
+          <pose>0.5 3 0.001 0 0 0</pose>
+          <geometry><cylinder><radius>0.5</radius><length>0.001</length></cylinder></geometry>
+          <material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material>
+        </visual>
+        <visual name="circle_inner">
+          <pose>0.5 3 0.002 0 0 0</pose>
+          <geometry><cylinder><radius>0.45</radius><length>0.001</length></cylinder></geometry>
+          <material><ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse></material>
+        </visual>
+
+        <!-- เส้นทางจากวงกลมวิ่งไปขวาบน -->
+        <visual name="maze_up_1"><pose>0.5 4.0 0.001 0 0 0</pose><geometry><box><size>0.05 1.0 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="maze_right_1"><pose>2.75 4.5 0.001 0 0 0</pose><geometry><box><size>4.5 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        
+        <!-- ขอบขวาสุด ชี้ขึ้นฟ้า -->
+        <visual name="maze_up_far_right"><pose>5 5.0 0.001 0 0 0</pose><geometry><box><size>0.05 1.0 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+
+        <!-- วกกลับลงมาหากล่องเขียว -->
+        <visual name="maze_down_1"><pose>5 4.0 0.001 0 0 0</pose><geometry><box><size>0.05 1.0 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="maze_right_2"><pose>5.5 3.5 0.001 0 0 0</pose><geometry><box><size>1.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="maze_down_2"><pose>6 2.75 0.001 0 0 0</pose><geometry><box><size>0.05 1.5 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="maze_left_1"><pose>5.5 2.0 0.001 0 0 0</pose><geometry><box><size>1.0 0.05 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="maze_down_to_green"><pose>5 1.0 0.001 0 0 0</pose><geometry><box><size>0.05 2.0 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+
+      </link>
+    </model>
+  </world>
+</sdf>
