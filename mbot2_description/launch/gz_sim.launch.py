@@ -13,7 +13,7 @@ def generate_launch_description():
     pkg_share = get_package_share_directory('mbot2_description')
 
     xacro_file = os.path.join(pkg_share, 'urdf', 'mbot2.urdf.xacro')
-    world_file = os.path.join(pkg_share, 'worlds', 'mbot2_world.sdf')
+    world_file = os.path.join(pkg_share, 'worlds', 'Map1.sdf')
 
     # value_type=str บอก robot_state_publisher ตรงๆ ว่านี่คือข้อความ URDF
     # ไม่ใช่ YAML ป้องกัน error "Unable to parse the value of parameter

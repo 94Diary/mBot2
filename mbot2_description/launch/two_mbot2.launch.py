@@ -4,17 +4,21 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, SetEnvironmentVariable
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command
+from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
 
 ROBOTS = (
     # name, x (m), y (m), yaw (rad)
-    ('mbot1', '-0.30', '-0.20', '1.5707963'),
-    ('mbot2', '0.30', '0.20', '-1.5707963'),
+    # mBot1: ค่า Pose ที่อ่านจาก Gazebo UI ของจุด START
+    ('mbot1', '-14.98', '14.99', '0.01'),
+    # mBot2: วางด้านหลัง mBot1, หันไปทิศ +x เดียวกัน
+    # จะวิ่งตรงใน SEARCH จน Quad RGB เห็นเส้นดำ
+    ('mbot2', '-15.55', '14.99', '0.01'),
 )
 
 
@@ -31,7 +35,7 @@ def robot_description(xacro_file, robot_name):
     )
 
 
-def robot_actions(xacro_file, robot_name, x_position, y_position, yaw):
+def robot_actions(xacro_file, robot_name, x_position, y_position, yaw, start_controllers):
     """คืน launch actions สำหรับ model, TF publisher, spawn และ controller."""
     description = robot_description(xacro_file, robot_name)
 
@@ -78,6 +82,7 @@ def robot_actions(xacro_file, robot_name, x_position, y_position, yaw):
             namespace=robot_name,
             output='screen',
             parameters=[{'use_sim_time': True}],
+            condition=IfCondition(start_controllers),
         ),
     ]
 
@@ -106,9 +111,16 @@ def bridge_arguments():
 
 def generate_launch_description():
     """สร้าง launch description สำหรับสนามและ mBot2 สองตัว."""
+    start_controllers = LaunchConfiguration('start_controllers')
+    declare_start_controllers = DeclareLaunchArgument(
+        'start_controllers',
+        default_value='false',
+        description='Start maze_solver for both robots automatically.',
+    )
+
     pkg_share = get_package_share_directory('mbot2_description')
     xacro_file = os.path.join(pkg_share, 'urdf', 'mbot2.urdf.xacro')
-    world_file = os.path.join(pkg_share, 'worlds', 'mbot2_world.sdf')
+    world_file = os.path.join(pkg_share, 'worlds', 'Map1.sdf')
 
     set_sdf_path = SetEnvironmentVariable(
         'SDF_PATH',
@@ -125,9 +137,9 @@ def generate_launch_description():
         launch_arguments={'gz_args': f'-r {world_file}'}.items(),
     )
 
-    actions = [set_sdf_path, gazebo]
+    actions = [declare_start_controllers, set_sdf_path, gazebo]
     for robot in ROBOTS:
-        actions.extend(robot_actions(xacro_file, *robot))
+        actions.extend(robot_actions(xacro_file, *robot, start_controllers))
 
     actions.append(
         Node(

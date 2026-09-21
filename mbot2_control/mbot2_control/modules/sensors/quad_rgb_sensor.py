@@ -36,6 +36,7 @@ class QuadRGBArray:
         self.threshold = threshold
         # index 0=เซนเซอร์1(ซ้ายสุด) ... 3=เซนเซอร์4(ขวาสุด)
         self.black = [False, False, False, False]
+        self.rgb = [(0,0,0)] * 4
 
         for index, topic in enumerate(TOPICS):
             node.create_subscription(
@@ -44,6 +45,7 @@ class QuadRGBArray:
     def _make_callback(self, index):
         def callback(msg):
             r, g, b = image_to_rgb(msg)
+            self.rgb[index] = (r,g,b)
             self.black[index] = is_black(r, g, b, self.threshold)
         return callback
 
