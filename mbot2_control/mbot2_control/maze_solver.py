@@ -80,6 +80,7 @@ class MazeSolver(Node):
             cmd.angular.z = 0.0
 
             if self.sensors.any_black():
+                self.get_logger().info(f'Quad RGB: {self.sensors.rgb}')
                 self._change_state(STATE_INITIAL_TURN)
 
         elif self.state == STATE_INITIAL_TURN:

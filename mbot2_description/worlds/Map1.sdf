@@ -2,6 +2,27 @@
 <sdf version="1.6">
   <world name="GoogleMaps_Troll_Maze">
     
+    <!-- ระบบพื้นฐานที่ทำให้ฟิสิกส์, คำสั่งสร้าง model และ sensor ทำงาน -->
+    <physics name="1ms" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <plugin filename="libignition-gazebo-physics-system.so"
+            name="ignition::gazebo::systems::Physics">
+    </plugin>
+    <plugin filename="libignition-gazebo-user-commands-system.so"
+            name="ignition::gazebo::systems::UserCommands">
+    </plugin>
+    <plugin filename="libignition-gazebo-scene-broadcaster-system.so"
+            name="ignition::gazebo::systems::SceneBroadcaster">
+    </plugin>
+    <!-- Quad RGB เป็น camera sensor จึงต้องมี plugin นี้จึงจะส่งภาพได้ -->
+    <plugin filename="libignition-gazebo-sensors-system.so"
+            name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
     <!-- แสงสว่างจัดเต็ม ให้เซนเซอร์กล้องจับสีได้ชัดเจน -->
     <light type="directional" name="sun">
       <cast_shadows>true</cast_shadows>
