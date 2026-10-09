@@ -1,6 +1,7 @@
 """อ่านระยะด้านหน้าจากเซ็นเซอร์ Ultrasonic ของ mBot2."""
 
 import math
+import time
 
 from sensor_msgs.msg import LaserScan
 
@@ -39,6 +40,7 @@ class UltrasonicSensor:
         """สมัครรับ LaserScan และเตรียมพื้นที่เก็บระยะล่าสุด."""
         self.distance_m = None
         self.ready = False
+        self.last_seen_at = 0.0
 
         self._subscription = node.create_subscription(
             LaserScan,
@@ -49,7 +51,12 @@ class UltrasonicSensor:
 
     def _callback(self, msg: LaserScan):
         self.ready = True
+        self.last_seen_at = time.monotonic()
         self.distance_m = nearest_valid_range(msg)
+
+    def fresh(self, max_age_seconds):
+        """True while the range sensor is still sending messages."""
+        return self.ready and time.monotonic() - self.last_seen_at <= max_age_seconds
 
     def obstacle_ahead(self, stop_distance_m=0.25):
         """คืน True เมื่อมีวัตถุอยู่ไม่เกินระยะหยุดที่กำหนด."""

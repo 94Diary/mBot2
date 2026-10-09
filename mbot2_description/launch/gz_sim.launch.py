@@ -13,7 +13,7 @@ def generate_launch_description():
     pkg_share = get_package_share_directory('mbot2_description')
 
     xacro_file = os.path.join(pkg_share, 'urdf', 'mbot2.urdf.xacro')
-    world_file = os.path.join(pkg_share, 'worlds', 'Map1.sdf')
+    world_file = os.path.join(pkg_share, 'worlds', 'simple_branch_maze.sdf')
 
     # value_type=str บอก robot_state_publisher ตรงๆ ว่านี่คือข้อความ URDF
     # ไม่ใช่ YAML ป้องกัน error "Unable to parse the value of parameter
@@ -52,7 +52,10 @@ def generate_launch_description():
         package='ros_gz_sim',
         executable='create',
         output='screen',
-        arguments=['-topic', 'robot_description', '-name', 'mbot2', '-z', '0.06'],
+        arguments=[
+            '-topic', 'robot_description', '-name', 'mbot2',
+            '-x', '-5.4', '-y', '0.0', '-z', '0.06', '-Y', '0.0',
+        ],
     )
 
     # Bridge ROS 2 <-> Gazebo Sim topics
