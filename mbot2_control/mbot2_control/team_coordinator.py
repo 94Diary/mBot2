@@ -7,6 +7,8 @@ ROS imports so its decisions can be unit-tested without Gazebo or ROS running.
 import json
 import math
 import time
+import uuid
+from datetime import datetime, timezone
 
 import rclpy
 from rclpy.node import Node
@@ -139,6 +141,8 @@ class TeamLedger:
 class TeamCoordinator(Node):
     def __init__(self):
         super().__init__('maze_team_coordinator')
+        self.run_id = uuid.uuid4().hex
+        self.run_started_at = datetime.now(timezone.utc).isoformat()
         self.ledger = TeamLedger()
         qos = QoSProfile(depth=10, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                          reliability=ReliabilityPolicy.RELIABLE)
@@ -162,7 +166,11 @@ class TeamCoordinator(Node):
                 self.ledger.update_pose(report, now)
             elif kind == 'BRANCH_REQUEST':
                 result = self.ledger.request_branch(report, now)
-                self._publish(self.decision_pub, result)
+                self._publish(self.decision_pub, {
+                    **result,
+                    'run_id': self.run_id,
+                    'run_started_at': self.run_started_at,
+                })
                 self.get_logger().info(
                     f"{result['robot']} at J{result['junction_id']}: "
                     f"{result['choice']} (shared={result.get('shared', False)})")
@@ -178,7 +186,11 @@ class TeamCoordinator(Node):
             self.get_logger().warning(f'Ignoring malformed team report: {exc}')
 
     def _publish_state(self):
-        self._publish(self.state_pub, self.ledger.snapshot(time.monotonic()))
+        self._publish(self.state_pub, {
+            **self.ledger.snapshot(time.monotonic()),
+            'run_id': self.run_id,
+            'run_started_at': self.run_started_at,
+        })
 
 
 def main(args=None):

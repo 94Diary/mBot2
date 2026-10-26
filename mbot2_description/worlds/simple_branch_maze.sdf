@@ -3,8 +3,8 @@
   <!--
     Small line-following maze for mbot1/mbot2.
     Start: (-5.4, 0), heading east. Black = followable line.
-    Yellow shoulders approach J1/J2/J3 from every connected branch;
-    the black centre remains continuous so the line follower keeps its path.
+    Yellow squares mark the exact centre of J1/J2/J3. They cover the inner
+    RGB sensors while leaving the outer RGB sensors on the black side arms.
 
     Route graph (metres):
       START (-5.4,0) to J1 (-2,0) to blocked end (0.4,0)
@@ -14,8 +14,9 @@
                        blocked end      GOAL (2,5.2)
                          (-2,4.95)
 
-    The maze_solver slows on yellow, remembers each junction using odometry,
-    and tries the straight branch first. At a wall it reverses briefly,
+    The maze_solver stops on a yellow marker plus an outer black sensor,
+    remembers each junction using odometry, and takes an open side branch.
+    At a wall it reverses briefly,
     turns around, follows the line back, and takes the side branch. It
     publishes local digital trail events; a shared multi-robot map is future work.
   -->
@@ -101,105 +102,23 @@
           <material><ambient>0.005 0.005 0.005 1</ambient><diffuse>0.005 0.005 0.005 1</diffuse></material>
         </visual>
 
-        <!-- Yellow shoulders on every approach to a junction. The central
-             black line stays continuous, including on the return trip. -->
-        <visual name="j1_warning_left">
-          <pose>-2.2 0.0375 0.001 0 0 0</pose>
-          <geometry><box><size>0.4 0.025 0.001</size></box></geometry>
+        <!-- The yellow centre covers only the inner sensors (at +/-1 cm).
+             Outer sensors (+/-3 cm) still see the black side branches. -->
+        <visual name="j1_junction_yellow">
+          <pose>-2 0 0.002 0 0 0</pose>
+          <geometry><box><size>0.05 0.05 0.001</size></box></geometry>
           <material><ambient>1 0.75 0 1</ambient><diffuse>1 0.75 0 1</diffuse></material>
         </visual>
-        <visual name="j1_warning_right">
-          <pose>-2.2 -0.0375 0.001 0 0 0</pose>
-          <geometry><box><size>0.4 0.025 0.001</size></box></geometry>
+        <visual name="j2_junction_yellow">
+          <pose>-2 3 0.002 0 0 0</pose>
+          <geometry><box><size>0.05 0.05 0.001</size></box></geometry>
           <material><ambient>1 0.75 0 1</ambient><diffuse>1 0.75 0 1</diffuse></material>
         </visual>
-        <visual name="j2_warning_west">
-          <pose>-2.0375 2.8 0.001 0 0 0</pose>
-          <geometry><box><size>0.025 0.4 0.001</size></box></geometry>
+        <visual name="j3_junction_yellow">
+          <pose>2 3 0.002 0 0 0</pose>
+          <geometry><box><size>0.05 0.05 0.001</size></box></geometry>
           <material><ambient>1 0.75 0 1</ambient><diffuse>1 0.75 0 1</diffuse></material>
         </visual>
-        <visual name="j2_warning_east">
-          <pose>-1.9625 2.8 0.001 0 0 0</pose>
-          <geometry><box><size>0.025 0.4 0.001</size></box></geometry>
-          <material><ambient>1 0.75 0 1</ambient><diffuse>1 0.75 0 1</diffuse></material>
-        </visual>
-        <visual name="j3_warning_north">
-          <pose>1.8 3.0375 0.001 0 0 0</pose>
-          <geometry><box><size>0.4 0.025 0.001</size></box></geometry>
-          <material><ambient>1 0.75 0 1</ambient><diffuse>1 0.75 0 1</diffuse></material>
-        </visual>
-        <visual name="j3_warning_south">
-          <pose>1.8 2.9625 0.001 0 0 0</pose>
-          <geometry><box><size>0.4 0.025 0.001</size></box></geometry>
-          <material><ambient>1 0.75 0 1</ambient><diffuse>1 0.75 0 1</diffuse></material>
-        </visual>
-
-        <!-- J1, approaching from the blocked east arm or the north arm. -->
-        <visual name="j1_east_warning_north">
-          <pose>-1.8 0.0375 0.001 0 0 0</pose>
-          <geometry><box><size>0.4 0.025 0.001</size></box></geometry>
-          <material><ambient>1 0.75 0 1</ambient><diffuse>1 0.75 0 1</diffuse></material>
-        </visual>
-        <visual name="j1_east_warning_south">
-          <pose>-1.8 -0.0375 0.001 0 0 0</pose>
-          <geometry><box><size>0.4 0.025 0.001</size></box></geometry>
-          <material><ambient>1 0.75 0 1</ambient><diffuse>1 0.75 0 1</diffuse></material>
-        </visual>
-        <visual name="j1_north_warning_west">
-          <pose>-2.0375 0.2 0.001 0 0 0</pose>
-          <geometry><box><size>0.025 0.4 0.001</size></box></geometry>
-          <material><ambient>1 0.75 0 1</ambient><diffuse>1 0.75 0 1</diffuse></material>
-        </visual>
-        <visual name="j1_north_warning_east">
-          <pose>-1.9625 0.2 0.001 0 0 0</pose>
-          <geometry><box><size>0.025 0.4 0.001</size></box></geometry>
-          <material><ambient>1 0.75 0 1</ambient><diffuse>1 0.75 0 1</diffuse></material>
-        </visual>
-
-        <!-- J2, approaching from its blocked north arm or its east arm. -->
-        <visual name="j2_north_warning_west">
-          <pose>-2.0375 3.2 0.001 0 0 0</pose>
-          <geometry><box><size>0.025 0.4 0.001</size></box></geometry>
-          <material><ambient>1 0.75 0 1</ambient><diffuse>1 0.75 0 1</diffuse></material>
-        </visual>
-        <visual name="j2_north_warning_east">
-          <pose>-1.9625 3.2 0.001 0 0 0</pose>
-          <geometry><box><size>0.025 0.4 0.001</size></box></geometry>
-          <material><ambient>1 0.75 0 1</ambient><diffuse>1 0.75 0 1</diffuse></material>
-        </visual>
-        <visual name="j2_east_warning_north">
-          <pose>-1.8 3.0375 0.001 0 0 0</pose>
-          <geometry><box><size>0.4 0.025 0.001</size></box></geometry>
-          <material><ambient>1 0.75 0 1</ambient><diffuse>1 0.75 0 1</diffuse></material>
-        </visual>
-        <visual name="j2_east_warning_south">
-          <pose>-1.8 2.9625 0.001 0 0 0</pose>
-          <geometry><box><size>0.4 0.025 0.001</size></box></geometry>
-          <material><ambient>1 0.75 0 1</ambient><diffuse>1 0.75 0 1</diffuse></material>
-        </visual>
-
-        <!-- J3, approaching from its blocked east arm or the goal arm. -->
-        <visual name="j3_east_warning_north">
-          <pose>2.2 3.0375 0.001 0 0 0</pose>
-          <geometry><box><size>0.4 0.025 0.001</size></box></geometry>
-          <material><ambient>1 0.75 0 1</ambient><diffuse>1 0.75 0 1</diffuse></material>
-        </visual>
-        <visual name="j3_east_warning_south">
-          <pose>2.2 2.9625 0.001 0 0 0</pose>
-          <geometry><box><size>0.4 0.025 0.001</size></box></geometry>
-          <material><ambient>1 0.75 0 1</ambient><diffuse>1 0.75 0 1</diffuse></material>
-        </visual>
-        <visual name="j3_north_warning_west">
-          <pose>1.9625 3.2 0.001 0 0 0</pose>
-          <geometry><box><size>0.025 0.4 0.001</size></box></geometry>
-          <material><ambient>1 0.75 0 1</ambient><diffuse>1 0.75 0 1</diffuse></material>
-        </visual>
-        <visual name="j3_north_warning_east">
-          <pose>2.0375 3.2 0.001 0 0 0</pose>
-          <geometry><box><size>0.025 0.4 0.001</size></box></geometry>
-          <material><ambient>1 0.75 0 1</ambient><diffuse>1 0.75 0 1</diffuse></material>
-        </visual>
-
         <visual name="goal_green">
           <pose>2 5.2 0.002 0 0 0</pose>
           <geometry><box><size>0.35 0.35 0.001</size></box></geometry>
