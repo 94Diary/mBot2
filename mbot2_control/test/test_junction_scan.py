@@ -495,6 +495,40 @@ class BlackJunctionScanTest(unittest.TestCase):
                 break
         self.assertEqual(maze_solver.FOLLOW, self.node.state)
 
+    def wait_at_junction_facing(self, heading):
+        # Scan finished: the robot waits for the team, still turned to where
+        # the sweep stopped, which is not the way it will drive.
+        self.use_team()
+        self.robot = FloorHarness(self.node, [INBOUND, STRAIGHT, LEFT], self.clock)
+        self.node._update_pose(0.5, 0.0, heading)
+        self.node.junctions = [{
+            'id': 1, 'position': (0.5, 0.0), 'world_position': (0.5, 0.0),
+            'heading': 0.0, 'world_heading': 0.0, 'left_open': True,
+            'right_open': False, 'straight_open': True}]
+        self.node._change_state(maze_solver.JUNCTION_PAUSE)
+
+    def test_waiting_at_junction_does_not_yield_along_scan_heading(self):
+        heading = math.radians(-130)
+        self.wait_at_junction_facing(heading)
+        # A peer on another line happens to lie along the leftover heading.
+        self.node.team_peers = {'mbot0': {
+            'x': 0.5 + 0.6 * math.cos(heading), 'y': 0.6 * math.sin(heading),
+            'heading': heading + math.pi, 'state': maze_solver.FOLLOW,
+            'route_order': 0}}
+        self.robot.tick()
+        self.assertNotEqual(maze_solver.YIELDING, self.node.state)
+
+    def test_waiting_at_junction_turns_away_despite_ultrasonic(self):
+        self.wait_at_junction_facing(math.radians(-130))
+        self.node.ultrasonic.distance_m = 0.2  # a robot parked on another line
+        self.node.team_choice = {
+            'choice': 'left', 'junction_id': 1, 'direction': 1,
+            'request_id': 'r1', 'junction_x': 0.5, 'junction_y': 0.0,
+            'heading': math.pi / 2}
+        self.clock[0] += maze_solver.JUNCTION_PAUSE_SECONDS + 0.1
+        self.robot.tick()
+        self.assertEqual(maze_solver.TURNING, self.node.state)
+
 
 if __name__ == '__main__':
     unittest.main()

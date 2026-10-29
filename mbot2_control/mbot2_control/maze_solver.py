@@ -1219,9 +1219,11 @@ class MazeSolver(Node):
             self.last_centered_pose = self.pose
 
         if (self.team_enabled and self.state in
-                (SEARCH, FOLLOW, APPROACH_JUNCTION, JUNCTION_PAUSE,
+                (SEARCH, FOLLOW, APPROACH_JUNCTION,
                  CENTERING, BRANCH_CAPTURE, RETURNING,
                  REACQUIRE, ALIGN_LINE, YIELD_RESUME)):
+            # Not while waiting at a junction: after a scan the robot faces
+            # wherever the sweep stopped, not the way it will drive.
             head_on = self._head_on_peer()
             if (head_on is not None and
                     self._peer_has_priority(head_on[0], head_on[1])):
@@ -1418,7 +1420,9 @@ class MazeSolver(Node):
                 return
 
         # Stop for one control tick before reversing.
-        if (self.state not in (REACQUIRE, LINE_LOST)
+        # Standing or pivoting at a junction cannot hit anything ahead, and
+        # the ultrasonic may be pointing down another line.
+        if (self.state not in (REACQUIRE, LINE_LOST, JUNCTION_PAUSE, TURNING)
                 and self.ultrasonic.obstacle_ahead(OBSTACLE_STOP_DISTANCE_M)):
             peer = self._peer_ahead() if self.team_enabled else None
             if peer is not None:
