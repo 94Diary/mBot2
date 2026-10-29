@@ -131,5 +131,10 @@ class QuadRGBArray:
 
         สีเหลืองตรงกลางแยกบังเส้นดำใต้ตัวใน จึงห้ามบังคับให้ตัวใน
         เห็นดำพร้อมกัน การเรียกฟังก์ชันนี้ต้องตรวจ yellow ก่อนเสมอ.
+        แผนที่ใหม่ทาสีแยกทับกิ่งข้างด้วย ตัวนอกจึงอาจเห็นสีแยกแทนดำ.
         """
-        return self.black[0], self.black[3]
+        # Only at the cross itself are both inner sensors on path colour; an
+        # off-centre robot on the inbound arm touches it with one outer sensor.
+        inner_on_path = all(self.black[i] or self.yellow[i] for i in (1, 2))
+        return (self.black[0] or (inner_on_path and self.yellow[0]),
+                self.black[3] or (inner_on_path and self.yellow[3]))

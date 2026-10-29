@@ -16,10 +16,10 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 ROBOTS = (
     # name, x (m), y (m), yaw (rad)
-    # Three separate starting spots inside the blue area, off the black line.
-    ('mbot1', '-1.20', '-1.52', '1.5708'),
-    ('mbot2', '-0.90', '-1.52', '1.5708'),
-    ('mbot3', '-0.60', '-1.52', '1.5708'),
+    # Robots queue on the single lead-in line inside the blue start box, facing +x into the maze.
+    ('mbot1', '-1.95', '-1.25', '0.0'),
+    ('mbot2', '-2.20', '-1.25', '0.0'),
+    ('mbot3', '-2.45', '-1.25', '0.0'),
 )
 
 
@@ -183,6 +183,8 @@ def generate_launch_description():
                set_sdf_path, gazebo, gazebo_headless,
                Node(package='mbot2_control', executable='team_coordinator',
                     name='maze_team_coordinator', output='screen',
+                    # junctions in mbot2_seed7_maze sit on a 0.5 m grid
+                    parameters=[{'junction_match_radius': 0.25}],
                     condition=IfCondition(start_controllers))]
     for index, robot in enumerate(ROBOTS):
         devices = robot_actions(xacro_file, *robot, start_controllers,

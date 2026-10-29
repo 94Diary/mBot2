@@ -30,7 +30,8 @@ def direction_key(heading):
 class TeamLedger:
     """Shared, observation-based junction/branch ledger; no preloaded maze."""
 
-    def __init__(self):
+    def __init__(self, match_radius=MATCH_RADIUS_M):
+        self.match_radius = match_radius
         self.junctions = {}
         self.next_junction_id = 1
         self.next_route_order = 1
@@ -63,7 +64,7 @@ class TeamLedger:
 
     def _junction(self, x, y):
         for node in self.junctions.values():
-            if math.hypot(node['x'] - x, node['y'] - y) <= MATCH_RADIUS_M:
+            if math.hypot(node['x'] - x, node['y'] - y) <= self.match_radius:
                 return node
         node_id = self.next_junction_id
         self.next_junction_id += 1
@@ -242,7 +243,9 @@ class TeamCoordinator(Node):
         super().__init__('maze_team_coordinator')
         self.run_id = uuid.uuid4().hex
         self.run_started_at = datetime.now(timezone.utc).isoformat()
-        self.ledger = TeamLedger()
+        self.declare_parameter('junction_match_radius', MATCH_RADIUS_M)
+        self.ledger = TeamLedger(
+            float(self.get_parameter('junction_match_radius').value))
         qos = QoSProfile(depth=10, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                          reliability=ReliabilityPolicy.RELIABLE)
         self.decision_pub = self.create_publisher(String, '/maze_team/decision', qos)

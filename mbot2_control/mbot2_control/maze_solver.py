@@ -67,6 +67,7 @@ JUNCTION_PAUSE_SECONDS = 1.0
 
 # Front RGB sensor is ~8.5 cm ahead of the base centre in the robot description.
 RGB_FRONT_OFFSET_M = 0.085
+WHEEL_X_OFFSET_M = -0.015  # wheel axle behind base_link: the pivot when turning in place
 JUNCTION_SLOW_RADIUS_M = 0.55
 JUNCTION_LATERAL_TOLERANCE_M = 0.15
 JUNCTION_ESCAPE_DISTANCE_M = 0.16  # พ้นปื้นเหลืองตรงกลางก่อนตรวจแยกใหม่
@@ -198,6 +199,7 @@ class MazeSolver(Node):
         self.junction_entry_pose = None
         self.junction_candidate = None
         self.junction_candidate_ticks = 0
+        self.junction_needs_request = False
         self.line_search_after = FOLLOW
         self.last_search_log_at = 0.0
         self.align_last_black_at = 0.0
@@ -210,6 +212,10 @@ class MazeSolver(Node):
         self.line_lost_anchor = None
         self.line_lost_phase = None
         self.line_lost_turn_direction = 1
+        self.scan_rotation = 0.0
+        self.scan_last_yaw = 0.0
+        self.scan_saw_black = False
+        self.line_search_given_up = False
         self.trail_id = 0
         self.trail_start_distance = 0.0
         self.last_trail_update = 0.0
@@ -426,7 +432,8 @@ class MazeSolver(Node):
         world = self._world_pose()
         if world is None:
             return
-        if self.state == CENTERING and self.active_team_branch is not None:
+        if (self.state == CENTERING and not self.junction_needs_request
+                and self.active_team_branch is not None):
             self._team_report({
                 'type': 'CANCEL_BRANCH',
                 'request_id': self.active_team_branch['request_id'],
@@ -442,6 +449,8 @@ class MazeSolver(Node):
             })
             self.pending_team_request = None
             self.team_choice = None
+        # Not yet asked: the junction is seen again after the yield.
+        self.junction_needs_request = False
         self.yield_start_pose = world[:2]
         self.yield_heading = world[2]
         self.yield_peer_name = peer_name
@@ -466,14 +475,14 @@ class MazeSolver(Node):
             f'ถอยตามเส้นให้ {peer_name} จนกว่าเขาจะเลี้ยวพ้นทางร่วม')
 
     def _request_team_branch(self, returning, left_open, right_open,
-                             position_override=None):
+                             position_override=None, straight_open=True):
         world = self._world_pose()
         position = position_override or self._world_sensor_position()
         if world is None or position is None:
             return
         self.request_sequence += 1
         choices = []
-        if not returning:
+        if not returning and straight_open:
             choices.append({'name': 'straight', 'heading': world[2]})
         if left_open:
             choices.append({'name': 'left', 'heading': world[2] + math.pi / 2})
@@ -483,7 +492,9 @@ class MazeSolver(Node):
         if returning and self.junctions:
             node = self.junctions[-1]
             original = node.get('world_heading', world[2] + math.pi)
-            headings = [(original, False), (original + math.pi, True)]
+            headings = [(original + math.pi, True)]
+            if node.get('straight_open', True):
+                headings.insert(0, (original, False))
             if node['left_open']:
                 headings.append((original + math.pi / 2, False))
             if node['right_open']:
@@ -559,6 +570,37 @@ class MazeSolver(Node):
         self.team_choice = None
         self.no_route_logged = False
         return True
+
+    def _ask_at_junction_centre(self):
+        """Wheels are on the junction; RGB now looks past it at the straight arm."""
+        self.junction_needs_request = False
+        node = self.junctions[-1]
+        node['straight_open'] = self.sensors.any_black() or self.sensors.any_yellow()
+        self.get_logger().info(
+            f"J{node['id']} ทางตรง{'เปิด' if node['straight_open'] else 'ปิด'} "
+            '(อ่านจากพื้นเลยกลางแยก)')
+        if self.team_enabled:
+            self._request_team_branch(
+                False, node['left_open'], node['right_open'],
+                node['world_position'], straight_open=node['straight_open'])
+            self._change_state(JUNCTION_PAUSE)
+            return
+        if self.branch_angle == 0.0 and not node['straight_open']:
+            self.branch_angle = math.pi / 2 if node['left_open'] else -math.pi / 2
+        self._leave_junction_center()
+
+    def _leave_junction_center(self):
+        if self.branch_angle == 0.0:
+            # Cross the marker without treating its yellow centre as
+            # a lost line; the new straight segment begins ahead.
+            self.returning = False
+            self.wait_for_yellow_clear = True
+            self._new_segment()
+            self.branch_capture_heading = self.pose[2]
+            self.branch_capture_start_distance = self.distance_total
+            self._change_state(BRANCH_CAPTURE)
+        else:
+            self._start_turn(self.branch_angle, FOLLOW, 'BRANCH')
 
     def _sensor_position(self):
         x, y, yaw = self.pose
@@ -695,7 +737,15 @@ class MazeSolver(Node):
 
     def _begin_line_recovery(self, after_state, anchor=None):
         self.line_search_after = after_state
-        self.line_lost_anchor = (anchor or self.last_centered_pose or self.pose)
+        anchor = anchor or self.last_centered_pose or self.pose
+        previous = self.line_lost_anchor
+        # Losing the line again at the same spot continues the same search.
+        if (previous is None or
+                math.hypot(anchor[0] - previous[0], anchor[1] - previous[1]) > 0.05):
+            self.scan_rotation = 0.0
+            self.scan_saw_black = False
+            self.line_search_given_up = False
+        self.line_lost_anchor = anchor
         self.line_lost_phase = 'RETURN_TO_ANCHOR'
         self.line_lost_turn_direction = self.align_last_side
         self._change_state(LINE_LOST)
@@ -712,9 +762,16 @@ class MazeSolver(Node):
 
     def _recover_lost_line(self, cmd, now):
         """Return to a recently observed line position, then sweep in place."""
-        anchor_x, anchor_y, anchor_yaw = self.line_lost_anchor
-        dx = anchor_x - self.pose[0]
-        dy = anchor_y - self.pose[1]
+        if self.line_search_given_up:
+            return  # stay stopped rather than spin; see the warning below
+        if self.sensors.any_black():
+            self.scan_saw_black = True
+        anchor_yaw = self.line_lost_anchor[2]
+        # Compare axle points: turning in place moves base_link, not the axle.
+        anchor_x, anchor_y = self._axle_point(self.line_lost_anchor)
+        axle_x, axle_y = self._axle_point(self.pose)
+        dx = anchor_x - axle_x
+        dy = anchor_y - axle_y
         distance = math.hypot(dx, dy)
         if distance > ANCHOR_ARRIVAL_M:
             self.line_lost_phase = 'RETURN_TO_ANCHOR'
@@ -747,10 +804,35 @@ class MazeSolver(Node):
                                  else -ANCHOR_TURN_SPEED)
                 return
             self.line_lost_phase = 'SCAN_AT_ANCHOR'
+            self.scan_last_yaw = self.pose[2]
 
         # A narrow left/right sweep can miss a line after drifting sideways.
-        # Rotate all the way around until RGB actually finds black.
+        # Rotate all the way around until RGB finds black, but only once.
+        self.scan_rotation += abs(angle_difference(self.pose[2], self.scan_last_yaw))
+        self.scan_last_yaw = self.pose[2]
+        if self.scan_rotation >= 2 * math.pi:
+            # With walls at dead ends, a lost line is not proof of one.
+            if self.team_enabled and self.active_team_branch is not None:
+                self._team_report({'type': 'RETRY_BRANCH', **self.active_team_branch})
+                self.active_team_branch = None
+            # A U-turn only helps on the way out with the line seen behind;
+            # returning, it would face the dead end again.
+            if self.scan_saw_black and self.line_search_after == FOLLOW:
+                self.get_logger().warning(
+                    'หมุนหาเส้นครบรอบแล้วไม่เจอ: กลับรถย้อนไปแยกล่าสุด')
+                self.line_lost_anchor = None
+                self._start_turn(math.pi, RETURNING, 'UTURN')
+                return
+            self.line_search_given_up = True
+            self.get_logger().error(
+                'หมุนหาเส้นครบรอบแล้วไม่เจอทางที่ไปต่อได้: หยุดรอ (ต้องช่วยวางหุ่นกลับบนเส้น)')
+            return
         cmd.angular.z = self.line_lost_turn_direction * ANCHOR_TURN_SPEED
+
+    def _axle_point(self, pose):
+        x, y, yaw = pose
+        return (x + WHEEL_X_OFFSET_M * math.cos(yaw),
+                y + WHEEL_X_OFFSET_M * math.sin(yaw))
 
     def _line_error(self):
         weights = [2, 1, -1, -2]  # leftmost to rightmost
@@ -789,6 +871,7 @@ class MazeSolver(Node):
                     'world_heading': self._world_pose()[2],
                     'left_open': left_open,
                     'right_open': right_open,
+                    'straight_open': True,
                 })
             else:
                 self.junctions = self.junctions[:known_index + 1]
@@ -819,15 +902,21 @@ class MazeSolver(Node):
                     return False
                 chosen = 'รอตัวกลางเลือกจากกิ่งที่จำได้'
             self.get_logger().debug(f'ขากลับเลือกเลี้ยว{chosen}')
+        if not returning:
+            # Bring the wheels onto the junction first; the RGB row then looks
+            # past it and shows whether a straight branch exists.
+            self.active_junction_world = self.junctions[-1]['world_position']
+            self.junction_needs_request = True
+            self.center_start = self.pose[:2]
+            self.center_heading = self.pose[2]
+            self._change_state(CENTERING)
+            return True
         if self.team_enabled:
-            if returning:
-                # Left/right swap when the robot approaches from the other side.
-                self._request_team_branch(
-                    True, self.junctions[-1]['right_open'],
-                    self.junctions[-1]['left_open'],
-                    self.junctions[-1].get('world_position'))
-            else:
-                self._request_team_branch(False, left_open, right_open)
+            # Left/right swap when the robot approaches from the other side.
+            self._request_team_branch(
+                True, self.junctions[-1]['right_open'],
+                self.junctions[-1]['left_open'],
+                self.junctions[-1].get('world_position'))
         self._change_state(JUNCTION_PAUSE)
         self.get_logger().debug(
             f"แยก {self.junctions[-1]['id']} "
@@ -1051,17 +1140,10 @@ class MazeSolver(Node):
                                        self.pose[1] - self.center_start[1])
                             >= RGB_FRONT_OFFSET_M)
             if centered:
-                if self.branch_angle == 0.0:
-                    # Cross the marker without treating its yellow centre as
-                    # a lost line; the new straight segment begins ahead.
-                    self.returning = False
-                    self.wait_for_yellow_clear = True
-                    self._new_segment()
-                    self.branch_capture_heading = self.pose[2]
-                    self.branch_capture_start_distance = self.distance_total
-                    self._change_state(BRANCH_CAPTURE)
+                if self.junction_needs_request:
+                    self._ask_at_junction_centre()
                 else:
-                    self._start_turn(self.branch_angle, FOLLOW, 'BRANCH')
+                    self._leave_junction_center()
             else:
                 cmd.linear.x = SEARCH_SPEED
                 cmd.angular.z = max(-MAX_TURN, min(
@@ -1393,6 +1475,11 @@ class MazeSolver(Node):
                     if not self._apply_team_choice():
                         self.cmd_pub.publish(cmd)
                         return
+                if not self.returning:
+                    # The outward pass asked from the centre already.
+                    self._leave_junction_center()
+                    self.cmd_pub.publish(cmd)
+                    return
                 # RGB sits 8.5 cm ahead of the wheel centre. The outer sensor
                 # stops at the actual junction; move the wheels to its centre
                 # before rotating or crossing straight.

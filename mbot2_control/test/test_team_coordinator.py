@@ -43,6 +43,17 @@ class TeamLedgerTest(unittest.TestCase):
             request('mbot2', 'late', -2.0, 3.82), 10.0)
         self.assertEqual(first['junction_id'], second['junction_id'])
 
+    def test_grid_map_keeps_neighbouring_junctions_apart(self):
+        # mbot2_seed7_maze has junctions on a 0.5 m grid.
+        ledger = TeamLedger(match_radius=0.25)
+        ledger.update_pose({'robot': 'mbot1', 'x': -1.25, 'y': -1.25}, 10.0)
+        first = ledger.request_branch(
+            request('mbot1', 'a', -1.25, -1.25), 10.0)
+        second = ledger.request_branch(
+            request('mbot1', 'b', -0.75, -1.25), 10.0)
+        self.assertNotEqual(first['junction_id'], second['junction_id'])
+        self.assertAlmostEqual(-0.75, second['junction_x'])
+
     def test_blocked_branch_is_not_assigned_again(self):
         first = self.ledger.request_branch(request('mbot1', 'a'), 10.0)
         self.ledger.block_branch({'robot': 'mbot1',

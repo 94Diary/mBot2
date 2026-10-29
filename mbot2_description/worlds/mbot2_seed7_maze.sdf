@@ -37,13 +37,13 @@
       <static>true</static>
       <link name="floor">
         <collision name="collision">
-          <pose>0 0 -0.005 0 0 0</pose>
-          <geometry><box><size>3.7 3.7 0.01</size></box></geometry>
+          <pose>-0.5 0 -0.005 0 0 0</pose>
+          <geometry><box><size>4.7 3.7 0.01</size></box></geometry>
           <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
         </collision>
         <visual name="floor_visual">
-          <pose>0 0 -0.005 0 0 0</pose>
-          <geometry><box><size>3.7 3.7 0.01</size></box></geometry>
+          <pose>-0.5 0 -0.005 0 0 0</pose>
+          <geometry><box><size>4.7 3.7 0.01</size></box></geometry>
           <material>
             <ambient>0.95 0.95 0.95 1</ambient>
             <diffuse>0.95 0.95 0.95 1</diffuse>
@@ -56,6 +56,45 @@
     <model name="maze_lines">
       <static>true</static>
       <link name="lines">
+        <!-- Start: one lead-in line from the blue start box (west of the maze) into the bottom-left corner -->
+        <visual name="start_lead_in">
+          <pose>-1.925 -1.25 0.004 0 0 0</pose>
+          <geometry><box><size>1.3625 0.025 0.002</size></box></geometry>
+          <material>
+            <ambient>0.02 0.02 0.02 1</ambient>
+            <diffuse>0.02 0.02 0.02 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+        <!-- The corner becomes a T junction (west, north, east): green arms -->
+        <visual name="start_junction_w">
+          <pose>-1.33125 -1.25 0.0055 0 0 0</pose>
+          <geometry><box><size>0.1625 0.025 0.003</size></box></geometry>
+          <material>
+            <ambient>0.0 0.8 0.2 1</ambient>
+            <diffuse>0.0 0.8 0.2 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+        <visual name="start_junction_n">
+          <pose>-1.25 -1.16875 0.0055 0 0 0</pose>
+          <geometry><box><size>0.025 0.1625 0.003</size></box></geometry>
+          <material>
+            <ambient>0.0 0.8 0.2 1</ambient>
+            <diffuse>0.0 0.8 0.2 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+        <visual name="start_junction_e">
+          <pose>-1.16875 -1.25 0.0055 0 0 0</pose>
+          <geometry><box><size>0.1625 0.025 0.003</size></box></geometry>
+          <material>
+            <ambient>0.0 0.8 0.2 1</ambient>
+            <diffuse>0.0 0.8 0.2 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+
       <visual name="line_0">
         <pose>-1.25 -1.0 0.001 0 0 0</pose>
         <geometry><box><size>0.025 0.525 0.002</size></box></geometry>
@@ -624,14 +663,59 @@
         </material>
       </visual>
       <visual name="start_area_blue">
-        <pose>-0.90 -1.52 0.0025 0 0 0</pose>
-        <geometry><box><size>0.95 0.38 0.002</size></box></geometry>
+        <pose>-2.2 -1.25 0.0025 0 0 0</pose>
+        <geometry><box><size>0.8 0.3 0.002</size></box></geometry>
         <material>
           <ambient>0.02 0.27 0.9 1</ambient>
           <diffuse>0.02 0.27 0.9 1</diffuse>
           <specular>0.05 0.05 0.05 1</specular>
         </material>
       </visual>      </link>
+    </model>
+    <!-- Walls 8 cm past each dead-end line end, so the ultrasonic sees it. -->
+    <model name="dead_end_walls">
+      <static>true</static>
+      <link name="walls">
+        <collision name="dead_end_east_south_collision">
+          <pose>1.33 -1.25 0.05 0 0 0</pose>
+          <geometry><box><size>0.02 0.20 0.10</size></box></geometry>
+        </collision>
+        <visual name="dead_end_east_south_visual">
+          <pose>1.33 -1.25 0.05 0 0 0</pose>
+          <geometry><box><size>0.02 0.20 0.10</size></box></geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+        <collision name="dead_end_east_north_collision">
+          <pose>1.33 1.25 0.05 0 0 0</pose>
+          <geometry><box><size>0.02 0.20 0.10</size></box></geometry>
+        </collision>
+        <visual name="dead_end_east_north_visual">
+          <pose>1.33 1.25 0.05 0 0 0</pose>
+          <geometry><box><size>0.02 0.20 0.10</size></box></geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+        <collision name="dead_end_centre_collision">
+          <pose>-0.25 -0.17 0.05 0 0 0</pose>
+          <geometry><box><size>0.20 0.02 0.10</size></box></geometry>
+        </collision>
+        <visual name="dead_end_centre_visual">
+          <pose>-0.25 -0.17 0.05 0 0 0</pose>
+          <geometry><box><size>0.20 0.02 0.10</size></box></geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
     </model>
   </world>
 </sdf>
