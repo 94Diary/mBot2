@@ -26,8 +26,8 @@ def is_black(r, g, b, threshold=60):
 
 
 def is_yellow(r, g, b):
-    """เหลือง: แดงและเขียวเด่น แต่น้ำเงินต่ำ (ปรับเกณฑ์หลังดูค่า RGB จริง)."""
-    return r >= 110 and g >= 80 and b <= 90 and r > b * 1.5 and g > b * 1.5
+    """เหลือง: รับค่าที่ Gazebo วัดได้จริง เช่น (100, 87, 0) บนแถบเตือน."""
+    return r >= 85 and g >= 65 and b <= 90 and r > b * 1.5 and g > b * 1.5
 
 
 def is_green(r, g, b):

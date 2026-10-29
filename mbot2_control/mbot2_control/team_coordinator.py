@@ -33,17 +33,31 @@ class TeamLedger:
     def __init__(self):
         self.junctions = {}
         self.next_junction_id = 1
+        self.next_route_order = 1
         self.robots = {}
         self.goal = None
         self.decisions = {}
 
     def update_pose(self, report, now):
         robot = report['robot']
+        previous = self.robots.get(robot)
+        if previous is None:
+            route_order = self.next_route_order
+            self.next_route_order += 1
+        else:
+            route_order = previous['route_order']
+        if report.get('route_order') is not None:
+            route_order = int(report['route_order'])
         self.robots[robot] = {
             'x': float(report['x']),
             'y': float(report['y']),
             'heading': float(report.get('heading', 0.0)),
             'state': str(report.get('state', 'UNKNOWN')),
+            'returning': bool(report.get('returning', False)),
+            'yield_to': report.get('yield_to'),
+            'yield_junction': report.get('yield_junction'),
+            'yield_escape_heading': report.get('yield_escape_heading'),
+            'route_order': route_order,
             'seen_at': now,
         }
 
@@ -65,20 +79,47 @@ class TeamLedger:
             return self.decisions[token]
 
         node = self._junction(float(report['x']), float(report['y']))
+        # Arriving along a corridor is evidence that it has already been used.
+        # Without this, a later approach from the opposite side can mistake
+        # the original entrance for an unexplored straight-ahead branch.
+        if report.get('approach_heading') is not None:
+            inbound_key = direction_key(float(report['approach_heading']) + math.pi)
+            inbound = node['branches'].setdefault(
+                inbound_key, {'status': 'OPEN', 'owner': None, 'visited_by': []})
+            arrived = inbound.setdefault('arrived_by', [])
+            if robot not in arrived:
+                arrived.append(robot)
+            if robot not in inbound['visited_by']:
+                inbound['visited_by'].append(robot)
         candidates = []
+        branch_details = []
         for option in report['choices']:
-            heading = float(option['heading'])
-            key = direction_key(heading)
+            key = direction_key(float(option['heading']))
             branch = node['branches'].setdefault(
-                key, {'status': 'OPEN', 'owner': None})
+                key, {'status': 'OPEN', 'owner': None, 'visited_by': []})
+            branch_details.append({
+                'name': option['name'], 'status': branch['status'],
+                'visited_by': list(branch['visited_by']),
+                'fallback': bool(option.get('fallback', option['name'] == 'back')),
+                'failed_attempts': branch.get('failed_by', {}).get(robot, 0),
+            })
+            if option.get('fallback', option['name'] == 'back'):
+                continue  # use the known inbound route only as a fallback
+            heading = float(option['heading'])
             if branch['status'] == 'BLOCKED':
                 continue
+            # A robot that already explored this branch must try another one.
+            # Teammates may still share it when every unclaimed path is busy.
+            # Reservations and failed line capture do not prove a dead end.
             owner = branch['owner']
             owner_live = (owner in self.robots and
                           now - self.robots[owner]['seen_at'] < PEER_TIMEOUT_SECONDS)
             unclaimed = owner is None or owner == robot or not owner_live
             # The current order of choices is the robot's local preference.
-            score = 1 if unclaimed else 0
+            # A failed alignment is not exploration: never let its retry
+            # penalty make a known corridor beat an unexplored side branch.
+            score = (not bool(branch['visited_by']),
+                     -branch.get('failed_by', {}).get(robot, 0), unclaimed)
             if self.goal is not None:
                 dx = self.goal['x'] - node['x']
                 dy = self.goal['y'] - node['y']
@@ -93,6 +134,15 @@ class TeamLedger:
             candidates.append((*priority, -len(candidates), option, key))
 
         if not candidates:
+            for option in report['choices']:
+                if not option.get('fallback', option['name'] == 'back'):
+                    continue
+                key = direction_key(float(option['heading']))
+                branch = node['branches'].setdefault(
+                    key, {'status': 'OPEN', 'owner': None, 'visited_by': []})
+                if branch['status'] != 'BLOCKED':
+                    candidates.append((0, 0, 0, option, key))
+        if not candidates:
             result = {'robot': robot, 'request_id': request_id,
                       'choice': None, 'junction_id': node['id'],
                       'junction_x': node['x'], 'junction_y': node['y'],
@@ -100,25 +150,69 @@ class TeamLedger:
         else:
             _, _, _, option, key = max(candidates)
             branch = node['branches'][key]
-            shared = branch['owner'] not in (None, robot)
+            owner = branch['owner']
+            owner_live = (owner in self.robots and
+                          now - self.robots[owner]['seen_at'] < PEER_TIMEOUT_SECONDS)
+            shared = owner not in (None, robot) and owner_live
+            reason = ('TOWARD_GOAL' if self.goal is not None else
+                      'KNOWN_RETURN_ROUTE' if option.get('fallback', option['name'] == 'back') else
+                      'UNEXPLORED_BRANCH' if not branch['visited_by'] else
+                      'REVISIT_OPEN_BRANCH')
             if not shared:
                 branch['owner'] = robot
                 branch['status'] = 'CLAIMED'
+            if robot not in branch['visited_by']:
+                branch['visited_by'].append(robot)
+            route_order = self.next_route_order
+            self.next_route_order += 1
             result = {'robot': robot, 'request_id': request_id,
                       'choice': option['name'], 'junction_id': node['id'],
+                      'heading': float(option['heading']),
                       'junction_x': node['x'], 'junction_y': node['y'],
-                      'direction': key, 'shared': shared}
+                      'direction': key, 'shared': shared,
+                      'reason': reason,
+                      'route_order': route_order}
+        result['branches'] = branch_details
         self.decisions[token] = result
         return result
+
+    def cancel_branch(self, report):
+        """Release a junction choice when its robot has to yield before moving."""
+        token = (report['robot'], report['request_id'])
+        decision = self.decisions.pop(token, None)
+        if decision is None or decision.get('direction') is None:
+            return
+        node = self.junctions.get(decision['junction_id'])
+        if node is None:
+            return
+        branch = node['branches'].get(decision['direction'])
+        if branch is None:
+            return
+        if branch['owner'] == report['robot'] and branch['status'] != 'BLOCKED':
+            branch['owner'] = None
+            branch['status'] = 'OPEN'
+        if (report['robot'] in branch['visited_by'] and
+                report['robot'] not in branch.get('arrived_by', [])):
+            branch['visited_by'].remove(report['robot'])
 
     def block_branch(self, report):
         node = self.junctions.get(int(report['junction_id']))
         if node is None:
             return
         branch = node['branches'].get(int(report['direction']))
-        if branch is not None and branch['owner'] == report['robot']:
+        if branch is not None:
             branch['status'] = 'BLOCKED'
             branch['owner'] = None
+
+    def retry_branch(self, report):
+        self.cancel_branch(report)
+        node = self.junctions.get(int(report['junction_id']))
+        if node is None:
+            return
+        branch = node['branches'].get(int(report['direction']))
+        if branch is not None:
+            failed = branch.setdefault('failed_by', {})
+            failed[report['robot']] = failed.get(report['robot'], 0) + 1
 
     def set_goal(self, report):
         if self.goal is None:
@@ -130,7 +224,12 @@ class TeamLedger:
             'goal': self.goal,
             'robots': {
                 name: {'x': p['x'], 'y': p['y'],
-                       'heading': p['heading'], 'state': p['state']}
+                       'heading': p['heading'], 'state': p['state'],
+                       'route_order': p['route_order'],
+                       'returning': p['returning'],
+                       'yield_to': p['yield_to'],
+                       'yield_junction': p['yield_junction'],
+                       'yield_escape_heading': p['yield_escape_heading']}
                 for name, p in self.robots.items()
                 if now - p['seen_at'] < PEER_TIMEOUT_SECONDS
             },
@@ -171,12 +270,18 @@ class TeamCoordinator(Node):
                     'run_id': self.run_id,
                     'run_started_at': self.run_started_at,
                 })
-                self.get_logger().info(
+                self.get_logger().debug(
                     f"{result['robot']} at J{result['junction_id']}: "
                     f"{result['choice']} (shared={result.get('shared', False)})")
                 self._publish_state()
             elif kind == 'BLOCKED':
                 self.ledger.block_branch(report)
+                self._publish_state()
+            elif kind == 'RETRY_BRANCH':
+                self.ledger.retry_branch(report)
+                self._publish_state()
+            elif kind == 'CANCEL_BRANCH':
+                self.ledger.cancel_branch(report)
                 self._publish_state()
             elif kind == 'GOAL':
                 self.ledger.set_goal(report)
