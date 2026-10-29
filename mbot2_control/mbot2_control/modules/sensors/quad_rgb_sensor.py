@@ -1,13 +1,16 @@
 """อ่านค่าสีจากเซนเซอร์ Quad RGB 4 ตัวใต้ท้องหุ่น (ใช้เดินตามเส้น)"""
 
+import time
+
 from sensor_msgs.msg import Image
 
 # ลำดับเซนเซอร์ตามที่วางไว้ใน urdf: 1=ซ้ายสุด, 2=ซ้ายใน, 3=ขวาใน, 4=ขวาสุด
+# ชื่อไม่มี / นำหน้า เพื่อให้ ROS namespace ของหุ่นถูกเติมให้อัตโนมัติ
 TOPICS = [
-    '/quad_rgb_1/image',
-    '/quad_rgb_2/image',
-    '/quad_rgb_3/image',
-    '/quad_rgb_4/image',
+    'quad_rgb_1/image',
+    'quad_rgb_2/image',
+    'quad_rgb_3/image',
+    'quad_rgb_4/image',
 ]
 
 
@@ -20,6 +23,16 @@ def image_to_rgb(msg: Image):
 def is_black(r, g, b, threshold=60):
     """คืนค่า True ถ้าสีที่อ่านได้มืดพอจะถือว่าเป็นเส้นดำ"""
     return r < threshold and g < threshold and b < threshold
+
+
+def is_yellow(r, g, b):
+    """เหลือง: รับค่าที่ Gazebo วัดได้จริง เช่น (100, 87, 0) บนแถบเตือน."""
+    return r >= 85 and g >= 65 and b <= 90 and r > b * 1.5 and g > b * 1.5
+
+
+def is_green(r, g, b):
+    """เขียวเป้าหมาย: ช่องเขียวเด่นกว่าช่องแดงและน้ำเงิน."""
+    return g >= 100 and g > r * 1.6 and g > b * 1.6
 
 
 class QuadRGBArray:
@@ -35,6 +48,11 @@ class QuadRGBArray:
         self.threshold = threshold
         # index 0=เซนเซอร์1(ซ้ายสุด) ... 3=เซนเซอร์4(ขวาสุด)
         self.black = [False, False, False, False]
+        self.yellow = [False, False, False, False]
+        self.green = [False, False, False, False]
+        self.seen = [False, False, False, False]
+        self.last_seen_at = [0.0, 0.0, 0.0, 0.0]
+        self.rgb = [(0, 0, 0)] * 4
 
         for index, topic in enumerate(TOPICS):
             node.create_subscription(
@@ -42,9 +60,27 @@ class QuadRGBArray:
 
     def _make_callback(self, index):
         def callback(msg):
+            if len(msg.data) < 3:
+                return
             r, g, b = image_to_rgb(msg)
+            self.rgb[index] = (r, g, b)
             self.black[index] = is_black(r, g, b, self.threshold)
+            self.yellow[index] = is_yellow(r, g, b)
+            self.green[index] = is_green(r, g, b)
+            self.seen[index] = True
+            self.last_seen_at[index] = time.monotonic()
         return callback
+
+    @property
+    def ready(self):
+        """รอภาพจากทั้ง 4 ตัวก่อนเริ่มขับ เพื่อลดการตัดสินใจจากค่าเริ่มต้น."""
+        return all(self.seen)
+
+    def fresh(self, max_age_seconds):
+        """True only while all four camera streams are still arriving."""
+        now = time.monotonic()
+        return self.ready and all(
+            now - last_seen <= max_age_seconds for last_seen in self.last_seen_at)
 
     @property
     def left_outer(self):
@@ -64,3 +100,17 @@ class QuadRGBArray:
 
     def any_black(self):
         return any(self.black)
+
+    def any_yellow(self):
+        return any(self.yellow)
+
+    def any_green(self):
+        return any(self.green)
+
+    def junction_sides(self):
+        """อ่านกิ่งซ้าย/ขวาจากตัวนอกเมื่อเซนเซอร์ในอยู่บนจุดเหลือง.
+
+        สีเหลืองตรงกลางแยกบังเส้นดำใต้ตัวใน จึงห้ามบังคับให้ตัวใน
+        เห็นดำพร้อมกัน การเรียกฟังก์ชันนี้ต้องตรวจ yellow ก่อนเสมอ.
+        """
+        return self.black[0], self.black[3]

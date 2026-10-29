@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'maze_solver = mbot2_control.maze_solver:main',
+            'team_coordinator = mbot2_control.team_coordinator:main',
         ],
     },
 )
