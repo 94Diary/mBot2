@@ -1,72 +1,83 @@
-# mBot2 Swarm Cave Exploration — Project Context
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+# mBot2 Swarm Maze Exploration
 
 ## เป้าหมายโปรเจกต์
-สร้างฝูงหุ่นยนต์ mBot2 สำรวจถ้ำ/เขาวงกตอัตโนมัติ แต่ละตัวสื่อสารกันว่าสำรวจไปทางไหนแล้ว (ทางตัน/ทางที่ไปแล้ว) เพื่อไม่เดินซ้ำทาง แล้วช่วยกันหาทางออก
+ฝูงหุ่น mBot2 (2–3 ตัว) สำรวจเขาวงกตแบบเดินตามเส้นพร้อมกัน แบ่งกันไปคนละกิ่ง จำกิ่งที่เป็นทางตันร่วมกัน และเมื่อตัวใดเจอเป้าหมาย ตัวอื่นจะมุ่งไปรวมกันที่จุดนั้น
 
-**ข้อจำกัดสำคัญที่สุด: ต้องเอาโค้ดไปลงเครื่องจริง (mBot2 ของจริง) ได้ ไม่ใช่จำลองอย่างเดียว**
-→ ห้ามออกแบบอะไรที่ต้องพึ่งเซนเซอร์ที่ mBot2 จริงไม่มี (โดยเฉพาะ 2D LiDAR — ของจริงไม่มี มีแค่อัลตราโซนิกจุดเดียว)
-→ อัลกอริทึมที่เลือกใช้คือ **Trémaux's algorithm** (เดินตามผนัง + จำทางที่เคยผ่าน) เพราะใช้แค่เซนเซอร์ระยะจุดเดียวได้ ไม่ต้องมี SLAM/แผนที่เต็ม
-→ การแชร์ข้อมูลระหว่างหุ่น: ไม่ใช้ map merging (นั่นสำหรับ LiDAR) แต่ใช้วิธีง่ายกว่า — ส่งพิกัด+สถานะ (ทางตัน/สำรวจแล้ว) ไปที่ topic กลาง เช่น `/swarm/dead_ends` ให้ตัวอื่นเช็คก่อนตัดสินใจเดิน
+**ข้อจำกัดที่สำคัญที่สุดคือโค้ดต้องเอาไปรันบน mBot2 จริงได้** ไม่ใช่ใช้ได้แค่ในซิม
+- ใช้ได้เฉพาะเซนเซอร์ที่ mBot2 จริงมี: อัลตราโซนิกจุดเดียว, IMU, Quad RGB 4 จุดใต้ท้อง, encoder ล้อ **ห้ามเพิ่ม LiDAR** หรือออกแบบให้ต้องพึ่ง SLAM ที่ใช้ LiDAR
+- ห้ามโหลดแผนที่เขาวงกตไว้ล่วงหน้า ข้อมูลทางแยกต้องสร้างจากสิ่งที่หุ่นสังเกตเห็นเท่านั้น
+- ในซิมตอนนี้ใช้ Gazebo ground truth (`use_ground_truth:=true`, topic `/world/<world>/dynamic_pose/info`) แทนการระบุตำแหน่ง เพราะ odom คลาดมากหลังเลี้ยว ส่วนนี้**ใช้กับหุ่นจริงไม่ได้** เวลาออกแบบต้องคิดไว้ว่าจะเอาอะไรมาแทน
 
-## Environment (สำคัญ อย่าแนะนำอะไรที่ไม่ตรงกับนี้)
-- Windows 11 + **WSL2 Ubuntu 22.04**
-- **ROS 2 Humble**
-- **Gazebo Sim Fortress** (v6.18.0) — เรียกผ่านคำสั่ง `ign gazebo` ไม่ใช่ `gazebo` (Classic) หรือ `gz` (เวอร์ชันใหม่กว่า Fortress)
-- Plugin library names ใช้รูปแบบเก่า `libignition-gazebo-*-system.so` (ไม่ใช่ `libgz-sim-*` ของเวอร์ชันใหม่กว่า)
-- **GPU render บน WSLg ใช้ไม่ได้กับ Gazebo Fortress เวอร์ชันนี้** (บั๊กที่รู้กันมานาน แก้แล้วเฉพาะ Garden/Harmonic) → ต้องมี `export LIBGL_ALWAYS_SOFTWARE=1` ใน `~/.bashrc` (ตั้งไว้แล้ว) ไม่งั้น Gazebo จะเปิดแล้วปิดตัวเอง (crash)
-- Workspace: `~/ros2_ws/src/` (เปิดใน VS Code ผ่าน `code ~/ros2_ws/src`)
-- Git repo: https://github.com/94Diary/mBot2.git (push ผ่าน CLI แล้ว ใช้ได้ปกติ — **GitHub Desktop ใช้กับ WSL ไม่ได้** เป็น known limitation ให้ใช้ VS Code Source Control panel หรือ CLI แทน)
+## Environment (ห้ามแนะนำอะไรที่ไม่ตรงกับนี้)
+- Windows 11 + WSL2 Ubuntu 22.04, **ROS 2 Humble**
+- **Gazebo Sim Fortress** (v6.x): ใช้คำสั่ง `ign gazebo` ไม่ใช่ `gazebo` หรือ `gz`; ชื่อ plugin เป็น `libignition-gazebo-*-system.so`; ข้อความใน bridge ใช้ `ignition.msgs.*`
+- บน WSLg ต้องตั้ง `LIBGL_ALWAYS_SOFTWARE=1` (ใส่ไว้ใน `~/.bashrc` แล้ว) ถ้าไม่ตั้ง Gazebo จะ crash หรือ `ogre2` จะล้มในโหมด headless
+- Git: https://github.com/94Diary/mBot2.git (repo อยู่ที่ `~/ros2_ws/src`) ทำงานเป็นทีมผ่าน feature branch + PR; GitHub Desktop ใช้กับ WSL ไม่ได้
 
-## โครงสร้างแพ็กเกจ
-
-### `mbot2_description/` — โมเดลหุ่น + world (อย่าสับสนกับ mbot2_control)
-- `urdf/mbot2.urdf.xacro` — ไฟล์เดียวที่สร้างโมเดลทั้งหมด (รูปทรง/น้ำหนัก/แรงเสียดทาน/เซนเซอร์ทั้งหมดอยู่ในนี้)
-- `launch/gz_sim.launch.py` — เปิด Gazebo + spawn หุ่น + bridge topics (มี `world` launch arg เลือก world ได้)
-- `worlds/mbot2_maze_world.sdf` — world เริ่มต้น: ทางเข้า → ทางแยก → วงวนรอบเกาะกลาง → แยกทางตัน/ทางออก มีเส้นดำ+แพทช์สีเขียวไว้ทดสอบ Quad RGB ด้วย
-- `worlds/mbot2_world.sdf` — world เปล่า (พื้นเปล่าไม่มีกำแพง) เผื่อทดสอบอย่างอื่น
-
-**เซนเซอร์ที่มีในโมเดล (ตรงกับของจริง mBot2 ทุกตัว — ห้ามเพิ่ม LiDAR):**
-| เซนเซอร์ | Topic | ชนิดข้อมูล |
-|---|---|---|
-| Ultrasonic (จุดเดียว, 5-300cm) | `/ultrasonic/scan` | `sensor_msgs/LaserScan` (ใช้แค่ `ranges[0]`) |
-| IMU (gyro/accel บน CyberPi) | `/imu` | `sensor_msgs/Imu` |
-| Quad RGB ×4 (กล้อง 1x1 พิกเซล ใต้ท้อง) | `/quad_rgb_1/image` ... `/quad_rgb_4/image` | `sensor_msgs/Image` |
-| ขับเคลื่อน (diff-drive) | `/cmd_vel` (สั่งเข้า), `/odom` (อ่านออก) | `Twist`, `Odometry` |
-
-### `mbot2_control/` — โค้ดควบคุม (ament_python package)
-- `mbot2_control/maze_solver.py` — ตอนนี้เป็นแค่ demo เดินตามลำดับเวลาที่กำหนดตายตัว (เดินหน้า/ถอย/เลี้ยว) **ยังไม่ใช่ Trémaux's algorithm จริง** — ขั้นต่อไปคือเขียนตัวนี้ให้เป็น Trémaux's จริง โดยใช้ `/ultrasonic/scan` ตัดสินใจ
-- entry point ต้องเพิ่มใน `setup.py` (`entry_points/console_scripts`) ทุกครั้งที่สร้างไฟล์ใหม่ที่อยากสั่ง `ros2 run` ได้ตรงๆ
-- แผนไว้ว่าจะแยกโค้ดใช้ร่วมไปไว้ `mbot2_control/mbot2_control/modules/` เมื่อโค้ดเริ่มยาว (ยังไม่ได้สร้างจริง)
-
-## วิธีรันทดสอบ (ต้องมี 2 เทอร์มินัลพร้อมกันเสมอ)
+## คำสั่ง
 ```bash
-# เทอร์มินัล 1
-cd ~/ros2_ws && source install/setup.bash
+cd ~/ros2_ws && source /opt/ros/humble/setup.bash
+colcon build --packages-select mbot2_control mbot2_description --symlink-install
+source install/setup.bash
+
+# หลายหุ่น (ตัวหลัก): Gazebo + bridge + team_coordinator + maze_solver ทุกตัว
+ros2 launch mbot2_description two_mbot2.launch.py            # robot_count:=2|3 (ค่าเริ่มต้น 3)
+#   start_controllers:=false  เปิดแค่ซิม ไม่เปิดตัวควบคุม
+#   headless:=true            ไม่เปิดหน้าต่าง 3D
+
+# หุ่นเดี่ยว (โหมดเก่า, world = simple_branch_maze, ไม่มีทีม)
 ros2 launch mbot2_description gz_sim.launch.py
-
-# เทอร์มินัล 2
-source ~/ros2_ws/install/setup.bash
 ros2 run mbot2_control maze_solver
+
+# ดูการตัดสินใจของทีม
+ros2 topic echo /maze_team/decision   # หรือ /maze_team/state, /maze_team/report, /mbot1/trail
 ```
-แก้โค้ดแล้วต้อง: save → Ctrl+C ที่เทอร์มินัลที่รันอยู่ → `colcon build --packages-select <ชื่อแพ็กเกจ>` → รันใหม่ (ไม่มี hot-reload)
 
-## บั๊ก/ข้อจำกัดที่เจอมาแล้วและวิธีแก้ (อย่าเสนอวิธีแก้แบบอื่นถ้าไม่จำเป็น)
-1. **`robot_state_publisher` error "Unable to parse robot_description as yaml"** → แก้แล้วด้วย `ParameterValue(Command(...), value_type=str)` ใน launch file
-2. **Gazebo เปิดแล้วปิดเอง (เด้ง)** → GPU render พังบน WSLg+Fortress คู่นี้ → ใช้ `LIBGL_ALWAYS_SOFTWARE=1` (ตั้งถาวรใน `.bashrc` แล้ว)
-3. **กำแพง/สิ่งของที่ลากวางในหน้าต่าง Gazebo ตอนรันอยู่ (ผ่านเมนู insert) จะหายตอนปิดโปรแกรม** — ต้องเขียนลงไฟล์ `.sdf` ตรงๆ ถึงจะถาวร (ที่กำแพง maze ถาวร เพราะเขียนลงไฟล์)
-4. **Gazebo Fortress ไม่มีปุ่ม resize/scale วัตถุใน GUI** (มีแค่ translate/rotate) ต้องแก้ขนาดใน SDF ไฟล์โดยตรง
-5. **ผู้ใช้เป็นมือใหม่มาก** ต้องอธิบายละเอียด ทีละขั้น เป็นภาษาไทย ไม่ข้ามขั้นตอน ระวังเรื่อง `source install/setup.bash` ที่ต้องรันทุกเทอร์มินัลใหม่ (ลืมบ่อย)
-6. **`<camera>` sensor ใน Gazebo Fortress ต้องตั้งค่า `<clip><far>` ไม่ต่ำกว่า 0.1 เมตร** ไม่งั้น Gazebo อ่าน SDF ทั้งไฟล์ไม่ผ่าน (error `The value [x] is less than the minimum allowed value of [0.1] for key [far]` ลามจน spawn หุ่นไม่ได้เลย) — เจอตอนทำ Quad RGB sensor (กล้อง 1x1 พิกเซลมองพื้นใกล้ๆ) ที่ตอนแรกตั้ง `far` ไว้ 0.05 เพราะคิดว่าเซนเซอร์อยู่ใกล้พื้นแค่ ~2 ซม. → แก้โดยตั้ง `far` เป็น 0.15 แทน (ยังมองเห็นพื้นที่ระยะจริงได้ตามปกติ ค่า near/far แค่กำหนดช่วงมองเห็น ไม่ใช่ระยะที่ต้องอยู่พอดี)
-7. **`<include><uri>` แบบ relative path ใน world .sdf ใช้ path เทียบกับ CWD ตอนสั่งคำสั่ง ไม่ใช่เทียบกับตำแหน่งไฟล์ world เอง** พอเรียกผ่าน `ros2 launch` (CWD คนละที่กับ `worlds/`) จะหาไฟล์ไม่เจอ (error `Unable to find uri[...]`) → แก้ด้วยการตั้ง env var `SDF_PATH` ชี้ไปที่โฟลเดอร์ `worlds/` ผ่าน `SetEnvironmentVariable` ใน `gz_sim.launch.py` (ตั้งค่านี้ก่อน include gz_sim เสมอ)
-8. **ชื่อ ROS 2 topic ห้ามมี segment ที่ขึ้นต้นด้วยตัวเลข** (เช่น `/quad_rgb/1/image` ผิดกฎ เพราะส่วน `1` ขึ้นต้นด้วยเลข) — `create_subscription`/`create_publisher` จะโยน `InvalidTopicNameException` ทันที และฝั่ง `ros_gz_bridge` จะแค่ขึ้น `WARN: Failed to create a bridge...` เงียบๆ ไม่ใช่ error แดงเห็นชัด (คนละแบบกับ error สีแดงที่เจอบ่อยๆ) ทำให้เข้าใจผิดว่าไม่เป็นไรได้ง่ายมาก ต้องเช็ค WARN พวกนี้ให้ดีด้วย → ตั้งชื่อ topic เป็น `/quad_rgb_1/image` (เลขติดกับคำก่อนหน้าด้วย `_` แทนการขึ้น segment ใหม่) แทน
+เทสต์ (อยู่ใน `mbot2_control/test/`):
+```bash
+colcon test --packages-select mbot2_control && colcon test-result --verbose
+# รันเร็ว/รันตัวเดียว (ต้อง source /opt/ros/humble/setup.bash ก่อน)
+cd ~/ros2_ws/src/mbot2_control && python3 -m pytest test/test_team_coordinator.py -k distinct
+```
+- `test_team_coordinator.py` ทดสอบ `TeamLedger` ล้วนๆ โดยไม่ต้องใช้ ROS; `test_team_ros.py` ทดสอบผ่าน topic จริงโดยไม่ต้องเปิด Gazebo; ที่เหลือคือ lint (flake8/pep257/copyright)
+- ณ 2026-10-29 `test_stale_claim_can_be_reused` ล้มอยู่ก่อนแล้ว
 
-## Toolchain เฉพาะโปรเจกต์นี้
-- `xacro` แปลง `.urdf.xacro` → `.urdf`
-- `colcon build --packages-select <ชื่อ>` ทุกครั้งที่แก้โค้ด/โมเดล
-- `ros2 pkg create --build-type ament_python <ชื่อ> --dependencies rclpy geometry_msgs sensor_msgs` สำหรับสร้างแพ็กเกจ Python ใหม่
+เมื่อแก้ launch, xacro, `.sdf`, `package.xml` หรือ `setup.py` ต้อง build ใหม่และสั่ง launch ใหม่ แม้จะใช้ `--symlink-install` ก็ตาม
 
-## สิ่งที่ยังไม่ได้ทำ (Next steps)
-1. เขียน Trémaux's algorithm จริงใน `maze_solver.py` (ตอนนี้เป็นแค่ demo ตามเวลา)
-2. เพิ่ม node สื่อสารระหว่างหุ่น (`/swarm/dead_ends` หรือชื่อคล้ายกัน)
-3. ทำให้ spawn ได้หลายตัวพร้อมกัน (ตอนนี้ launch file รองรับแค่ตัวเดียว ต้องเพิ่ม namespace ต่อหุ่น)
-4. แยกโค้ดใช้ร่วมไปไว้ `modules/` เมื่อไฟล์เริ่มยาว
+## สถาปัตยกรรม
+
+### `mbot2_description/` (ament_cmake): โมเดล, world และ launch
+- `urdf/mbot2.urdf.xacro` คือไฟล์เดียวที่นิยามหุ่นทั้งตัว รวมเซนเซอร์และ Gazebo plugin โดยรับ arg `robot_namespace` เพื่อใส่ prefix ให้ทุก Gazebo topic
+- `launch/two_mbot2.launch.py`: ตำแหน่งเริ่มต้นของหุ่นอยู่ใน tuple `ROBOTS`; ส่งพารามิเตอร์ให้ `maze_solver` ของแต่ละตัว (`world_name`, `junction_color`, `goal_color`, spawn pose); controller แต่ละตัวเริ่มห่างกัน 8 วินาที; bridge สร้างจากฟังก์ชัน `bridge_arguments()` (`mbot1`/`mbot2` ใช้ bridge ตัวหนึ่ง ส่วน `mbot3` แยกอีกตัวตามเงื่อนไข)
+- **ชื่อ world ถูกเขียนตายตัวไว้หลายที่** ถ้าเปลี่ยน world ต้องแก้ให้ครบ ได้แก่ `world_file`, topic `dynamic_pose/info` ใน `bridge_arguments` และพารามิเตอร์ `world_name` (ตอนนี้ launch หลายหุ่นใช้ `mbot2_seed7_maze`, หุ่นเดี่ยวใช้ `simple_branch_maze`)
+- สีบนพื้นแต่ละ world ไม่เหมือนกัน: `simple_branch_maze` ใช้แยก=เหลือง เป้าหมาย=เขียว (ค่าเริ่มต้นของ node) ส่วน `mbot2_seed7_maze` ใช้แยก=เขียว เป้าหมาย=แดง (ตั้งผ่าน launch) เส้นทางเป็นสีดำ และกล่องเริ่มต้นเป็นสีน้ำเงิน
+
+### `mbot2_control/` (ament_python): ตัวควบคุม
+- `maze_solver.py` (~1400 บรรทัด) คือ node หนึ่งตัวต่อหุ่น ใช้ state machine ที่ `tick()` ทำงานที่ 10 Hz สถานะต่างๆ เป็นค่าคงที่แบบ string ที่หัวไฟล์ (`SEARCH`, `FOLLOW`, `APPROACH_JUNCTION`, `TURNING`, `RETURNING`, `YIELDING*`, `GOAL_REACHED` …) ค่าที่ใช้ปรับจูนเป็นค่าคงที่ตัวพิมพ์ใหญ่อยู่ด้านบนไฟล์ หุ่นเดินตามเส้นดำ ตรวจทางแยกด้วยสีแยก แล้วเก็บ breadcrumb stack ไว้ในเครื่องตัวเอง (`self.junctions`) เพื่อย้อนกลับเมื่อเจอทางตัน คล้ายแนวคิด Trémaux
+- `team_coordinator.py` คือ node กลางตัวเดียว ตรรกะการตัดสินใจทั้งหมดอยู่ในคลาส `TeamLedger` ซึ่ง**ไม่มี import ของ ROS** เพื่อให้ unit test ได้ ส่วน `TeamCoordinator` เป็นแค่ ROS wrapper บางๆ
+- `modules/sensors/` (`QuadRGBArray`, `UltrasonicSensor`) และ `modules/utils/encoder.py` เป็นตัวห่อ subscriber ที่ `maze_solver` สร้างขึ้นมาใช้
+- เมื่อเพิ่ม node ใหม่ ต้องเพิ่ม entry point ใน `setup.py` → `console_scripts`
+
+### โปรโตคอลของทีม (JSON ใน `std_msgs/String`)
+- หุ่น → `/maze_team/report` มี field `type` เป็น `POSE` | `BRANCH_REQUEST` | `BLOCKED` | `RETRY_BRANCH` | `CANCEL_BRANCH` | `GOAL`
+- coordinator → `/maze_team/decision` (กิ่งที่เลือกให้แต่ละ `request_id`) และ `/maze_team/state` (snapshot ทุก 0.5 วินาที: robots, junctions, goal) ทั้งสอง topic ใช้ QoS แบบ RELIABLE + TRANSIENT_LOCAL ฝั่ง subscriber ต้องตั้ง QoS ให้ตรงกัน
+- ทางแยกแยกด้วยตำแหน่ง (`MATCH_RADIUS_M` = 1 m) และกิ่งแบ่งเป็น 4 ทิศ 90° (`direction_key`) ซึ่งเหมาะกับ maze ที่ทุกกิ่งตั้งฉากกัน
+- ถ้า coordinator ไม่ทำงาน หุ่นจะหยุดรอที่ทางแยก ไม่เดาทางเอง หุ่นที่เจอกันบนเส้นแคบจะหลีกทางให้กันผ่าน state `YIELD_*` (ใช้ตำแหน่งเพื่อนจาก `/maze_team/state`)
+- รายละเอียดพฤติกรรมและผลทดสอบดูที่ `mbot2_control/MULTI_ROBOT.md`
+
+### Topics ของหุ่นแต่ละตัว (อยู่ใต้ `/<robot>/`)
+`cmd_vel`, `odom`, `joint_states`, `tf`, `imu`, `ultrasonic/scan` (`LaserScan` ใช้แค่ `ranges[0]`), `quad_rgb_1..4/image` (กล้อง 1×1 พิกเซล), `trail`
+
+## บั๊กที่เคยเจอและวิธีแก้ที่ใช้แล้ว (อย่าเสนอวิธีอื่นถ้าไม่จำเป็น)
+1. `robot_state_publisher` ขึ้น "Unable to parse robot_description as yaml" แก้ด้วย `ParameterValue(Command(...), value_type=str)`
+2. ของที่วางผ่าน GUI ของ Gazebo จะหายเมื่อปิดโปรแกรม และ Fortress ไม่มีปุ่ม scale ให้แก้ในไฟล์ `.sdf` โดยตรงเท่านั้น
+3. `<camera>` ใน Fortress ต้องตั้ง `<clip><far>` ≥ 0.1 ถ้าตั้งต่ำกว่านี้ SDF ทั้งไฟล์จะ parse ไม่ผ่านและ spawn หุ่นไม่ได้ (Quad RGB ตั้งไว้ที่ 0.15)
+4. `<include><uri>` แบบ relative ใน world จะเทียบกับ CWD ไม่ใช่ตำแหน่งไฟล์ world แก้โดยให้ launch ตั้ง `SDF_PATH` ชี้ไป `worlds/` ก่อน include gz_sim
+5. segment ของชื่อ topic ห้ามขึ้นต้นด้วยตัวเลข (`/quad_rgb/1/image` ผิด) ฝั่ง `ros_gz_bridge` จะขึ้นแค่ `WARN: Failed to create a bridge` ซึ่งดูไม่เหมือน error ต้องอ่าน WARN ด้วยทุกครั้ง
+
+## เกี่ยวกับผู้ใช้
+ผู้ใช้เป็นมือใหม่ ให้อธิบายเป็นภาษาไทยทีละขั้นโดยไม่ข้ามขั้นตอน และเตือนเรื่อง `source install/setup.bash` ที่ต้องรันในทุกเทอร์มินัลใหม่
