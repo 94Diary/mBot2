@@ -657,7 +657,7 @@
         <visual name="ln161"><pose>-7.800 3.600 0.002 0 0 0</pose><geometry><box><size>0.070 1.270 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
         <visual name="ln162"><pose>-5.400 3.600 0.002 0 0 0</pose><geometry><box><size>0.070 1.270 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
         <visual name="ln163"><pose>-3.000 3.600 0.002 0 0 0</pose><geometry><box><size>0.070 1.270 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
-        <visual name="ln164"><pose>-1.800 3.600 0.002 0 0 0</pose><geometry><box><size>0.070 1.270 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="ln164"><pose>-1.800 3.600 0.002 0 0 0</pose><geometry><box><size>0.070 1.270 0.001</size></box></geometry><material><ambient>0.85 0 0 1</ambient><diffuse>0.85 0 0 1</diffuse></material></visual>
         <visual name="ln165"><pose>-0.600 3.600 0.002 0 0 0</pose><geometry><box><size>0.070 1.270 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
         <visual name="ln166"><pose>0.600 3.600 0.002 0 0 0</pose><geometry><box><size>0.070 1.270 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
         <visual name="ln167"><pose>3.000 3.600 0.002 0 0 0</pose><geometry><box><size>0.070 1.270 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
@@ -723,7 +723,7 @@
         <visual name="ln227"><pose>3.000 -4.800 0.002 0 0 0</pose><geometry><box><size>0.070 1.270 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
         <visual name="ln228"><pose>4.200 -4.800 0.002 0 0 0</pose><geometry><box><size>0.070 1.270 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
         <visual name="ln229"><pose>5.400 -4.800 0.002 0 0 0</pose><geometry><box><size>0.070 1.270 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
-        <visual name="ln230"><pose>6.600 -4.800 0.002 0 0 0</pose><geometry><box><size>0.070 1.270 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
+        <visual name="ln230"><pose>6.600 -4.800 0.002 0 0 0</pose><geometry><box><size>0.070 1.270 0.001</size></box></geometry><material><ambient>1 0.55 0 1</ambient><diffuse>1 0.55 0 1</diffuse></material></visual>
         <visual name="ln231"><pose>7.800 -4.800 0.002 0 0 0</pose><geometry><box><size>0.070 1.270 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
         <visual name="ln232"><pose>9.000 -4.800 0.002 0 0 0</pose><geometry><box><size>0.070 1.270 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
         <visual name="ln233"><pose>-9.000 -6.000 0.002 0 0 0</pose><geometry><box><size>0.070 1.270 0.001</size></box></geometry><material><ambient>0 0 0 1</ambient><diffuse>0 0 0 1</diffuse></material></visual>
@@ -752,6 +752,44 @@
 
         <visual name="start_plate"><pose>-9.000 9.000 0.0040 0 0 0</pose><geometry><box><size>0.7 0.7 0.001</size></box></geometry><material><ambient>0.75 0.75 0.75 1</ambient><diffuse>0.75 0.75 0.75 1</diffuse></material></visual>
         <visual name="goal_plate"><pose>9.000 -9.000 0.0040 0 0 0</pose><geometry><box><size>0.7 0.7 0.001</size></box></geometry><material><ambient>0 0.8 0 1</ambient><diffuse>0 0.8 0 1</diffuse></material></visual>
+
+
+        <!-- ================= จุดทางแยกหลัก (เฉพาะทางแยกที่อยู่บนเส้นทางเฉลยจริง) ================= -->
+        <!-- ทางแยกที่อยู่ในซอยหลอก/ไม่เกี่ยวกับเส้นทางจริง ไม่ใส่เครื่องหมาย เพื่อไม่ให้รกเกินจำเป็น -->
+        <visual name="junction_0_up"><pose>-0.600 5.650 0.0035 0 0 0</pose><geometry><box><size>0.120 0.500 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_0_down"><pose>-0.600 5.150 0.0035 0 0 0</pose><geometry><box><size>0.120 0.500 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_0_left"><pose>-0.850 5.400 0.0035 0 0 0</pose><geometry><box><size>0.500 0.120 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_1_up"><pose>9.000 2.050 0.0035 0 0 0</pose><geometry><box><size>0.120 0.500 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_1_down"><pose>9.000 1.550 0.0035 0 0 0</pose><geometry><box><size>0.120 0.500 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_1_left"><pose>8.750 1.800 0.0035 0 0 0</pose><geometry><box><size>0.500 0.120 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_2_up"><pose>-0.600 -0.350 0.0035 0 0 0</pose><geometry><box><size>0.120 0.500 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_2_left"><pose>-0.850 -0.600 0.0035 0 0 0</pose><geometry><box><size>0.500 0.120 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_2_right"><pose>-0.350 -0.600 0.0035 0 0 0</pose><geometry><box><size>0.500 0.120 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_3_up"><pose>0.600 -2.750 0.0035 0 0 0</pose><geometry><box><size>0.120 0.500 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_3_down"><pose>0.600 -3.250 0.0035 0 0 0</pose><geometry><box><size>0.120 0.500 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_3_right"><pose>0.850 -3.000 0.0035 0 0 0</pose><geometry><box><size>0.500 0.120 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_4_up"><pose>6.600 -2.750 0.0035 0 0 0</pose><geometry><box><size>0.120 0.500 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_4_left"><pose>6.350 -3.000 0.0035 0 0 0</pose><geometry><box><size>0.500 0.120 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_4_right"><pose>6.850 -3.000 0.0035 0 0 0</pose><geometry><box><size>0.500 0.120 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_5_up"><pose>3.000 -3.950 0.0035 0 0 0</pose><geometry><box><size>0.120 0.500 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_5_down"><pose>3.000 -4.450 0.0035 0 0 0</pose><geometry><box><size>0.120 0.500 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_5_left"><pose>2.750 -4.200 0.0035 0 0 0</pose><geometry><box><size>0.500 0.120 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_6_up"><pose>9.000 -5.150 0.0035 0 0 0</pose><geometry><box><size>0.120 0.500 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_6_down"><pose>9.000 -5.650 0.0035 0 0 0</pose><geometry><box><size>0.120 0.500 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_6_left"><pose>8.750 -5.400 0.0035 0 0 0</pose><geometry><box><size>0.500 0.120 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_7_up"><pose>6.600 -6.350 0.0035 0 0 0</pose><geometry><box><size>0.120 0.500 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_7_down"><pose>6.600 -6.850 0.0035 0 0 0</pose><geometry><box><size>0.120 0.500 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_7_right"><pose>6.850 -6.600 0.0035 0 0 0</pose><geometry><box><size>0.500 0.120 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_8_up"><pose>0.600 -7.550 0.0035 0 0 0</pose><geometry><box><size>0.120 0.500 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_8_down"><pose>0.600 -8.050 0.0035 0 0 0</pose><geometry><box><size>0.120 0.500 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+        <visual name="junction_8_right"><pose>0.850 -7.800 0.0035 0 0 0</pose><geometry><box><size>0.500 0.120 0.001</size></box></geometry><material><ambient>1 0.85 0 1</ambient><diffuse>1 0.85 0 1</diffuse></material></visual>
+
+        <!-- ================= จุดหมายระหว่างทาง (สี่เหลี่ยมสีน้ำเงิน) อยู่ที่ "ทางตัน" ================= -->
+        <!-- 2 ใน 4 จุด มีเส้นทดสอบสีหลอก (แดง/ส้ม เลียนแบบสีจริง) นำทางเข้าไป เพื่อเช็คว่า mbot2 สับสน/error ไหม -->
+        <visual name="deadend_WP1_fakeCAUTION"><pose>-1.800 4.200 0.004 0 0 0</pose><geometry><box><size>0.550 0.550 0.001</size></box></geometry><material><ambient>0 0.3 1 1</ambient><diffuse>0 0.3 1 1</diffuse></material></visual>
+        <visual name="deadend_WP2_control"><pose>3.000 6.600 0.004 0 0 0</pose><geometry><box><size>0.550 0.550 0.001</size></box></geometry><material><ambient>0 0.3 1 1</ambient><diffuse>0 0.3 1 1</diffuse></material></visual>
+        <visual name="deadend_WP3_control"><pose>-3.000 -6.600 0.004 0 0 0</pose><geometry><box><size>0.550 0.550 0.001</size></box></geometry><material><ambient>0 0.3 1 1</ambient><diffuse>0 0.3 1 1</diffuse></material></visual>
+        <visual name="deadend_WP4_fakeBRIDGE"><pose>6.600 -4.200 0.004 0 0 0</pose><geometry><box><size>0.550 0.550 0.001</size></box></geometry><material><ambient>0 0.3 1 1</ambient><diffuse>0 0.3 1 1</diffuse></material></visual>
 
       </link>
     </model>
