@@ -31,8 +31,18 @@ def is_yellow(r, g, b):
 
 
 def is_green(r, g, b):
-    """เขียวเป้าหมาย: ช่องเขียวเด่นกว่าช่องแดงและน้ำเงิน."""
+    """เขียวบนแผนที่ใหม่เป็นจุดแยก."""
     return g >= 100 and g > r * 1.6 and g > b * 1.6
+
+
+def is_red(r, g, b):
+    """แดงบนแผนที่ใหม่เป็นเป้าหมาย."""
+    return r >= 100 and r > g * 1.6 and r > b * 1.6
+
+
+def is_blue(r, g, b):
+    """ฟ้าคือพื้นที่เริ่มต้น ไม่ใช่เส้นทางหรือทางแยก."""
+    return b >= 100 and b > r * 1.6 and b > g * 1.4
 
 
 class QuadRGBArray:
@@ -46,10 +56,13 @@ class QuadRGBArray:
 
     def __init__(self, node, threshold=60):
         self.threshold = threshold
+        self.junction_color = node.get_parameter('junction_color').value
+        self.goal_color = node.get_parameter('goal_color').value
         # index 0=เซนเซอร์1(ซ้ายสุด) ... 3=เซนเซอร์4(ขวาสุด)
         self.black = [False, False, False, False]
         self.yellow = [False, False, False, False]
         self.green = [False, False, False, False]
+        self.blue = [False, False, False, False]
         self.seen = [False, False, False, False]
         self.last_seen_at = [0.0, 0.0, 0.0, 0.0]
         self.rgb = [(0, 0, 0)] * 4
@@ -65,8 +78,11 @@ class QuadRGBArray:
             r, g, b = image_to_rgb(msg)
             self.rgb[index] = (r, g, b)
             self.black[index] = is_black(r, g, b, self.threshold)
-            self.yellow[index] = is_yellow(r, g, b)
-            self.green[index] = is_green(r, g, b)
+            self.yellow[index] = (is_green(r, g, b) if self.junction_color == 'green'
+                                  else is_yellow(r, g, b))
+            self.green[index] = (is_red(r, g, b) if self.goal_color == 'red'
+                                 else is_green(r, g, b))
+            self.blue[index] = is_blue(r, g, b)
             self.seen[index] = True
             self.last_seen_at[index] = time.monotonic()
         return callback
@@ -106,6 +122,9 @@ class QuadRGBArray:
 
     def any_green(self):
         return any(self.green)
+
+    def any_blue(self):
+        return any(self.blue)
 
     def junction_sides(self):
         """อ่านกิ่งซ้าย/ขวาจากตัวนอกเมื่อเซนเซอร์ในอยู่บนจุดเหลือง.

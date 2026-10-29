@@ -16,10 +16,10 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 ROBOTS = (
     # name, x (m), y (m), yaw (rad)
-    # Simple branch maze: both robots begin on the west-east black line.
-    ('mbot1', '-5.4', '0.0', '0.0'),
-    ('mbot2', '-6.1', '0.0', '0.0'),
-    ('mbot3', '-6.8', '0.0', '0.0'),
+    # Three separate starting spots inside the blue area, off the black line.
+    ('mbot1', '-1.20', '-1.52', '1.5708'),
+    ('mbot2', '-0.90', '-1.52', '1.5708'),
+    ('mbot3', '-0.60', '-1.52', '1.5708'),
 )
 
 
@@ -91,9 +91,12 @@ def robot_actions(xacro_file, robot_name, x_position, y_position, yaw,
                     'use_sim_time': True,
                     'team_enabled': True,
                     'use_ground_truth': True,
+                    'world_name': 'mbot2_seed7_maze',
                     'spawn_x': float(x_position),
                     'spawn_y': float(y_position),
                     'spawn_yaw': float(yaw),
+                    'junction_color': 'green',
+                    'goal_color': 'red',
                 }],
             )],
         ),
@@ -104,7 +107,7 @@ def bridge_arguments(robot_names, include_clock=False):
     """สร้างรายการ bridge ครบทุก topic สำหรับ mBot2 ทุกตัว."""
     arguments = ([
         '/clock@rosgraph_msgs/msg/Clock[ignition.msgs.Clock',
-        '/world/simple_branch_maze/dynamic_pose/info@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V',
+        '/world/mbot2_seed7_maze/dynamic_pose/info@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V',
     ] if include_clock else [])
 
     for robot_name in robot_names:
@@ -137,7 +140,7 @@ def generate_launch_description():
         description='Start the coordinator and maze solvers automatically.',
     )
     declare_robot_count = DeclareLaunchArgument(
-        'robot_count', default_value='2', description='2 or 3 robots.',
+        'robot_count', default_value='3', description='2 or 3 robots.',
     )
     declare_headless = DeclareLaunchArgument(
         'headless', default_value='false',
@@ -146,7 +149,7 @@ def generate_launch_description():
 
     pkg_share = get_package_share_directory('mbot2_description')
     xacro_file = os.path.join(pkg_share, 'urdf', 'mbot2.urdf.xacro')
-    world_file = os.path.join(pkg_share, 'worlds', 'simple_branch_maze.sdf')
+    world_file = os.path.join(pkg_share, 'worlds', 'mbot2_seed7_maze.sdf')
 
     set_sdf_path = SetEnvironmentVariable(
         'SDF_PATH',

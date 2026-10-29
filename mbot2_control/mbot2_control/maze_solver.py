@@ -24,7 +24,7 @@ APPROACH_SPEED = 0.14
 RETURN_SPEED = 0.22
 JUNCTION_RETURN_SPEED = 0.10
 SEARCH_SPEED = 0.12
-SEARCH_MAX_M = 0.25
+SEARCH_MAX_M = 0.45  # enough to leave the blue start area and reach the line
 REVERSE_SPEED = 0.15
 REVERSE_SECONDS = 1.5
 OBSTACLE_STOP_DISTANCE_M = 0.25
@@ -53,7 +53,7 @@ ALIGN_MAX_TURN = 0.75
 ALIGN_LOST_GRACE_SECONDS = 0.6
 BRANCH_CAPTURE_SPEED = 0.16
 BRANCH_CAPTURE_IGNORE_M = 0.03
-BRANCH_CAPTURE_MAX_M = 0.35
+BRANCH_CAPTURE_MAX_M = 0.24
 PATH_COLOR_GRACE_M = 0.08
 YIELD_PATH_GAP_M = 0.35  # front RGB can cross a broad junction while reversing
 ANCHOR_ARRIVAL_M = 0.015  # RGB footprint is only centimetres wide
@@ -107,9 +107,12 @@ class MazeSolver(Node):
         self.declare_parameter('junction_choice', 'side_first')
         self.declare_parameter('team_enabled', False)
         self.declare_parameter('use_ground_truth', False)
+        self.declare_parameter('world_name', 'simple_branch_maze')
         self.declare_parameter('spawn_x', 0.0)
         self.declare_parameter('spawn_y', 0.0)
         self.declare_parameter('spawn_yaw', 0.0)
+        self.declare_parameter('junction_color', 'yellow')
+        self.declare_parameter('goal_color', 'green')
         self.team_enabled = bool(self.get_parameter('team_enabled').value)
         self.use_ground_truth = bool(self.get_parameter('use_ground_truth').value)
         self.spawn_pose = (
@@ -162,8 +165,9 @@ class MazeSolver(Node):
         self.trail_pub = self.create_publisher(String, 'trail', 10)
         self.create_subscription(Odometry, 'odom', self._on_odom, 10)
         if self.use_ground_truth:
+            world_name = str(self.get_parameter('world_name').value)
             self.create_subscription(
-                TFMessage, '/world/simple_branch_maze/dynamic_pose/info',
+                TFMessage, f'/world/{world_name}/dynamic_pose/info',
                 self._on_ground_truth, 10)
         self.timer = self.create_timer(0.1, self.tick)
 
@@ -610,7 +614,8 @@ class MazeSolver(Node):
     def _new_segment(self):
         self.trail_id += 1
         self.trail_start_distance = self.distance_total
-        self._trail_event('IN_PROGRESS')
+        if self.sensors.any_black() or self.sensors.any_yellow():
+            self._trail_event('IN_PROGRESS')
 
     def _change_state(self, state):
         labels = {RETURNING: 'ย้อนกลับไปเลือกทางที่แยก',
@@ -743,11 +748,8 @@ class MazeSolver(Node):
                 return
             self.line_lost_phase = 'SCAN_AT_ANCHOR'
 
-        sweep_error = angle_difference(self.pose[2], anchor_yaw)
-        if sweep_error >= ANCHOR_SWEEP_RAD:
-            self.line_lost_turn_direction = -1
-        elif sweep_error <= -ANCHOR_SWEEP_RAD:
-            self.line_lost_turn_direction = 1
+        # A narrow left/right sweep can miss a line after drifting sideways.
+        # Rotate all the way around until RGB actually finds black.
         cmd.angular.z = self.line_lost_turn_direction * ANCHOR_TURN_SPEED
 
     def _line_error(self):
@@ -888,12 +890,16 @@ class MazeSolver(Node):
                 or now - self.last_odom_at > SIGNAL_STALE_SECONDS):
             if not self.waiting_logged:
                 self.get_logger().warning(
-                    'ข้อมูล RGB/Ultrasonic/odom หายหรือยังไม่มา: พักการขับจนสัญญาณกลับ')
+                    'รอข้อมูล: '
+                    f'RGB={self.sensors.fresh(SIGNAL_STALE_SECONDS)}, '
+                    f'Ultrasonic={self.ultrasonic.fresh(SIGNAL_STALE_SECONDS)}, '
+                    f'ตำแหน่ง={self.pose is not None and now - self.last_odom_at <= SIGNAL_STALE_SECONDS} '
+                    '(True=ได้รับแล้ว, False=ยังไม่มีหรือเก่า)')
                 self.waiting_logged = True
             self.cmd_pub.publish(cmd)
             return
         if self.waiting_logged:
-            self.get_logger().debug('ข้อมูลเซนเซอร์กลับมาแล้ว: ทำงานต่อ')
+            self.get_logger().info('ข้อมูลเซนเซอร์และตำแหน่งครบแล้ว: เริ่มทำงานต่อ')
             self.waiting_logged = False
         if self.team_enabled and now - self.last_team_state_at > 3.0:
             if not self.team_waiting_logged:
@@ -1235,6 +1241,7 @@ class MazeSolver(Node):
 
         if self.state == SEARCH:
             if self.sensors.any_black():
+                self.get_logger().info('ออกจากจุดเริ่มสีฟ้าและพบเส้นดำแล้ว')
                 self._new_segment()
                 self._change_state(FOLLOW)
             else:
@@ -1324,7 +1331,8 @@ class MazeSolver(Node):
         if self.state == APPROACH_JUNCTION:
             left, right = self.sensors.junction_sides()
             since_marker = self.distance_total - self.approach_start_distance
-            if (left or right) and since_marker <= JUNCTION_APPROACH_MAX_M:
+            if ((left or right) and self.sensors.any_yellow()
+                    and since_marker <= JUNCTION_APPROACH_MAX_M):
                 candidate = (left, right)
                 if candidate == self.junction_candidate:
                     self.junction_candidate_ticks += 1
@@ -1392,7 +1400,8 @@ class MazeSolver(Node):
                 self.center_heading = self.pose[2]
                 self._change_state(CENTERING)
 
-        if (self.trail_id and now - self.last_trail_update >= TRAIL_UPDATE_SECONDS
+        if (self.trail_id and (self.sensors.any_black() or self.sensors.any_yellow())
+                and now - self.last_trail_update >= TRAIL_UPDATE_SECONDS
                 and self.state in (FOLLOW, APPROACH_JUNCTION, RETURNING)):
             self._trail_event('IN_PROGRESS')
         self.cmd_pub.publish(cmd)
