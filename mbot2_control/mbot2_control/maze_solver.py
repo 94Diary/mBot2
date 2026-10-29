@@ -1232,6 +1232,9 @@ class MazeSolver(Node):
         if self.state == YIELDING:
             if self._yield_clear():
                 self.wait_for_yellow_clear = False
+                # Count line-free travel from here: reversing off the line
+                # end must not use up the grace for driving back onto it.
+                self.last_path_color_distance = self.distance_total
                 self._change_state(YIELD_RESUME)
                 self.yield_junction_world = None
                 self.yield_peer_name = None
@@ -1248,7 +1251,8 @@ class MazeSolver(Node):
                     self.yield_rear_blocked = True
             elif (self.yield_at_line_end or
                   self.distance_total - self.last_path_color_distance >
-                  (PATH_COLOR_GRACE_M if self.black_mode else YIELD_PATH_GAP_M)):
+                  # Black maze: no paint gaps on the line, so stop at once.
+                  (0.0 if self.black_mode else YIELD_PATH_GAP_M)):
                 # Backed off the end of the line (e.g. last in the start
                 # queue): creep forward until the RGB sees it again, then
                 # hold there for the rest of this yield; spinning would lose
@@ -1423,8 +1427,9 @@ class MazeSolver(Node):
                                                  self._world_pose()[2]))
                             > HEAD_ON_HEADING_RAD
                             and peer_pose.get('state') not in PIVOTING_STATES)
-                recovering = peer_pose.get('state') in (LINE_LOST, ALIGN_LINE,
-                                                       REACQUIRE)
+                # Only a lost peer may back into us while it searches; one
+                # squaring up after a turn is driving away, so just wait.
+                recovering = peer_pose.get('state') == LINE_LOST
                 if ((opposite or recovering) and
                         self._peer_has_priority(peer_name, peer_pose)):
                     self._begin_yield(peer_name)

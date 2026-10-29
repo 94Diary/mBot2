@@ -447,11 +447,46 @@ class BlackJunctionScanTest(unittest.TestCase):
             self.robot.tick()
             self.assertLess(abs(maze_solver.angle_difference(
                 self.node.pose[2], before)), 0.05)  # no spinning on the spot
+            # Black maze: stop as soon as the RGB row leaves the line end.
+            self.assertGreater(self.node._sensor_position()[0],
+                               -0.10 - HALF_LINE - 0.03)
         self.assertEqual(maze_solver.YIELDING, self.node.state)
+        # Black maze: stop as soon as the RGB row leaves the line end.
         sensor_x = self.node._sensor_position()[0]
-        self.assertGreater(sensor_x, -0.10 - maze_solver.PATH_COLOR_GRACE_M - 0.03)
+        self.assertGreater(sensor_x, -0.10 - HALF_LINE - 0.02)
         self.assertEqual(0.0, self.robot.sent[-1].linear.x)
         # The returning robot turns off; this one drives back without a search.
+        for _ in range(200):
+            self.peer(self.node.pose[0] - 1.0, math.pi, maze_solver.FOLLOW)
+            self.robot.tick()
+            self.assertNotEqual(maze_solver.LINE_LOST, self.node.state)
+            if self.node.state == maze_solver.FOLLOW:
+                break
+        self.assertEqual(maze_solver.FOLLOW, self.node.state)
+
+    def test_waits_behind_peer_aligning_after_its_turn(self):
+        # The leader has just turned out of a junction and is squaring up on
+        # its new line; it is driving away, so the follower only waits.
+        self.use_team()
+        self.robot = FloorHarness(self.node, [(-1.0, 0.0, 1.0, 0.0)], self.clock)
+        self.node._change_state(maze_solver.FOLLOW)
+        self.node.ultrasonic.distance_m = 0.2
+        for _ in range(20):
+            self.peer(self.node.pose[0] + 0.35, -0.1, maze_solver.ALIGN_LINE)
+            self.robot.tick()
+            self.assertNotEqual(maze_solver.YIELDING, self.node.state)
+        self.assertEqual(0.0, self.robot.sent[-1].linear.x)
+
+    def test_resume_drives_back_onto_line_from_just_past_its_end(self):
+        # A yield left the RGB row 6 cm past the start of the line.
+        self.use_team()
+        self.robot = FloorHarness(self.node, [(-0.10, 0.0, 1.0, 0.0)], self.clock)
+        self.node._update_pose(0.2, 0.0, 0.0)
+        self.peer(0.8, math.pi, maze_solver.RETURNING)
+        self.node._begin_yield('mbot0')
+        self.node._update_pose(-0.16 - maze_solver.RGB_FRONT_OFFSET_M, 0.0, 0.0)
+        self.robot.read_floor()
+        self.node.last_path_color_distance = self.node.distance_total - 0.06
         for _ in range(200):
             self.peer(self.node.pose[0] - 1.0, math.pi, maze_solver.FOLLOW)
             self.robot.tick()
