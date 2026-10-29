@@ -215,6 +215,8 @@ class MazeSolver(Node):
         self.junction_needs_request = False
         self.outer_hit_position = None  # local sensor point of a black-mode hit
         self.outer_hit_world = None
+        self.outer_hit_sides = set()  # 'left' (sensor 1) / 'right' (sensor 4)
+        self.scan_sides = set()
         self.scan_hit_world = None
         self.trigger_resume_distance = 0.0
         self.scan_pending = False
@@ -223,7 +225,7 @@ class MazeSolver(Node):
         self.scan_returning = False
         self.center_target = None
         self.scan_heading = None
-        self.scan_phase = None
+        self.scan_phases = []
         self.scan_hits = {}
         self.line_search_after = FOLLOW
         self.last_search_log_at = 0.0
@@ -720,6 +722,7 @@ class MazeSolver(Node):
         # A latched hit belongs to the drive that saw it.
         self.outer_hit_position = None
         self.outer_hit_world = None
+        self.outer_hit_sides = set()
 
     def _start_turn(self, angle, after, kind):
         if self.pose is None:
@@ -930,16 +933,25 @@ class MazeSolver(Node):
 
     def _on_outer_hit(self):
         """Image callback: latch where an outer sensor first touched black."""
-        if (self.outer_hit_position is None and self.pose is not None
-                and self.state in (FOLLOW, RETURNING)
-                and self.distance_total >= self.trigger_resume_distance):
+        sides = {side for side, index in (('left', 0), ('right', 3))
+                 if self.sensors.black[index]}
+        if self.state == CENTERING and self.scan_pending:
+            # The other arm may pass under its sensor a frame later.
+            self.scan_sides |= sides
+            return
+        if (self.pose is None or self.state not in (FOLLOW, RETURNING)
+                or self.distance_total < self.trigger_resume_distance):
+            return
+        if self.outer_hit_position is None:
             self.outer_hit_position = self._sensor_position()
             self.outer_hit_world = self._world_sensor_position()
+        self.outer_hit_sides |= sides
 
     def _begin_black_junction(self):
         """Bring the wheel axle onto the hit point; the sweep pivots there."""
         self.center_target = self.outer_hit_position
         self.scan_hit_world = self.outer_hit_world
+        self.scan_sides = set(self.outer_hit_sides)
         self.center_heading = self.pose[2]
         self.scan_returning = self.returning
         self.junction_entry_pose = self.last_centered_pose or self.pose
@@ -955,12 +967,17 @@ class MazeSolver(Node):
         self.center_on_axle = False
         self.scan_pivot = self._axle_point(self.pose)
         self.scan_heading = self.pose[2]
-        self.scan_phase = 'LEFT'
         self.scan_hits = {'straight': [], 'left': [], 'right': []}
+        # Wheels on the centre: the inner sensors already sit over the
+        # straight arm, so only the sides an outer sensor touched are swept.
+        if self.sensors.black[1] or self.sensors.black[2]:
+            self.scan_hits['straight'].append(0.0)
+        self.scan_phases = [side for side in ('left', 'right')
+                            if side in self.scan_sides]
         self._change_state(JUNCTION_SCAN)
 
     def _scan_junction(self, cmd):
-        """Sweep +130° then -130°, noting where the inner sensors see black."""
+        """Sweep to ±130° on each touched side, noting inner-sensor black."""
         theta = angle_difference(self.pose[2], self.scan_heading)
         if self.sensors.black[1] or self.sensors.black[2]:
             if abs(theta) <= SCAN_STRAIGHT_MAX_RAD:
@@ -969,14 +986,15 @@ class MazeSolver(Node):
                 self.scan_hits['left'].append(theta)
             elif -SCAN_LIMIT_RAD <= theta <= -SCAN_SIDE_MIN_RAD:
                 self.scan_hits['right'].append(theta)
-        if self.scan_phase == 'LEFT' and theta >= SCAN_LIMIT_RAD:
-            self.scan_phase = 'RIGHT'
-        if self.scan_phase == 'LEFT':
-            cmd.angular.z = ROTATE_SPEED
-        elif theta > -SCAN_LIMIT_RAD:
-            cmd.angular.z = -ROTATE_SPEED
-        else:
+        while self.scan_phases and (
+                (self.scan_phases[0] == 'left' and theta >= SCAN_LIMIT_RAD) or
+                (self.scan_phases[0] == 'right' and theta <= -SCAN_LIMIT_RAD)):
+            self.scan_phases.pop(0)
+        if not self.scan_phases:
             self._finish_junction_scan()
+        else:
+            cmd.angular.z = (ROTATE_SPEED if self.scan_phases[0] == 'left'
+                             else -ROTATE_SPEED)
 
     def _finish_junction_scan(self):
         exits = {name: sum(angles) / len(angles)

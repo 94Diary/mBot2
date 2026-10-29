@@ -214,11 +214,30 @@ class BlackJunctionScanTest(unittest.TestCase):
         self.assertAlmostEqual(0.0, maze_solver.angle_difference(
             choices['back'], math.pi), delta=0.15)
 
-    def test_scan_turns_at_most_400_degrees(self):
-        self.drive([INBOUND, STRAIGHT, LEFT],
+    def test_cross_scans_both_sides_within_400_degrees(self):
+        self.drive([INBOUND, STRAIGHT, LEFT, RIGHT],
                    until=lambda: bool(self.node.junctions))
+        node = self.node.junctions[-1]
+        self.assertTrue(node['left_open'] and node['right_open'])
         self.assertLess(self.scan_rotation, math.radians(400))
         self.assertGreater(self.scan_rotation, math.radians(360))
+
+    def test_left_hit_checks_only_the_left_side(self):
+        # Sensor 1 found the arm; sensor 4 saw nothing, so no right sweep.
+        self.drive([INBOUND, STRAIGHT, LEFT],
+                   until=lambda: bool(self.node.junctions))
+        node = self.node.junctions[-1]
+        self.assertTrue(node['left_open'] and node['straight_open'])
+        self.assertFalse(node['right_open'])
+        self.assertLess(self.scan_rotation, math.radians(150))
+
+    def test_right_hit_checks_only_the_right_side(self):
+        self.drive([INBOUND, STRAIGHT, RIGHT],
+                   until=lambda: bool(self.node.junctions))
+        node = self.node.junctions[-1]
+        self.assertTrue(node['right_open'] and node['straight_open'])
+        self.assertFalse(node['left_open'])
+        self.assertLess(self.scan_rotation, math.radians(150))
 
     def test_corner_turns_without_asking_the_team(self):
         self.use_team()
