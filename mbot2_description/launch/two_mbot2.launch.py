@@ -86,6 +86,7 @@ def robot_actions(xacro_file, robot_name, x_position, y_position, yaw,
                 name='maze_solver',
                 namespace=robot_name,
                 output='screen',
+                output_format='{line}',
                 parameters=[{
                     'use_sim_time': True,
                     'team_enabled': True,
@@ -175,6 +176,7 @@ def generate_launch_description():
     )
 
     actions = [declare_start_controllers, declare_robot_count, declare_headless,
+               SetEnvironmentVariable('RCUTILS_CONSOLE_OUTPUT_FORMAT', '{severity} {name}: {message}'),
                set_sdf_path, gazebo, gazebo_headless,
                Node(package='mbot2_control', executable='team_coordinator',
                     name='maze_team_coordinator', output='screen',

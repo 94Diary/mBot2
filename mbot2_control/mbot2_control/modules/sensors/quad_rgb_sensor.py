@@ -26,8 +26,8 @@ def is_black(r, g, b, threshold=60):
 
 
 def is_yellow(r, g, b):
-    """เหลือง: แดงและเขียวเด่น แต่น้ำเงินต่ำ (ปรับเกณฑ์หลังดูค่า RGB จริง)."""
-    return r >= 110 and g >= 80 and b <= 90 and r > b * 1.5 and g > b * 1.5
+    """เหลือง: รับค่าที่ Gazebo วัดได้จริง เช่น (100, 87, 0) บนแถบเตือน."""
+    return r >= 85 and g >= 65 and b <= 90 and r > b * 1.5 and g > b * 1.5
 
 
 def is_green(r, g, b):
@@ -108,10 +108,9 @@ class QuadRGBArray:
         return any(self.green)
 
     def junction_sides(self):
-        """สังเกตเส้นแยกจากตัวนอก ขณะตัวในยังเกาะเส้นหลัก.
+        """อ่านกิ่งซ้าย/ขวาจากตัวนอกเมื่อเซนเซอร์ในอยู่บนจุดเหลือง.
 
-        คืน (ซ้าย, ขวา) เป็นเพียงการสังเกต ณ ขณะนั้น ไม่ใช่แผนที่ถาวร.
-        ต้องใช้ร่วมกับแถบเหลืองก่อนแยกเพื่อไม่ให้เส้นตรงถูกเข้าใจผิด.
+        สีเหลืองตรงกลางแยกบังเส้นดำใต้ตัวใน จึงห้ามบังคับให้ตัวใน
+        เห็นดำพร้อมกัน การเรียกฟังก์ชันนี้ต้องตรวจ yellow ก่อนเสมอ.
         """
-        on_main_line = self.black[1] and self.black[2]
-        return on_main_line and self.black[0], on_main_line and self.black[3]
+        return self.black[0], self.black[3]
