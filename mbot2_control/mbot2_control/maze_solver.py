@@ -56,6 +56,7 @@ BRANCH_CAPTURE_IGNORE_M = 0.03
 BRANCH_CAPTURE_MAX_M = 0.24
 PATH_COLOR_GRACE_M = 0.08
 YIELD_PATH_GAP_M = 0.35  # front RGB can cross a broad junction while reversing
+YIELD_LINE_END_M = 0.03  # black maze: two reversing ticks without black
 ANCHOR_ARRIVAL_M = 0.015  # RGB footprint is only centimetres wide
 ANCHOR_TRAVEL_SPEED = 0.10
 ANCHOR_TURN_SPEED = 0.65
@@ -509,6 +510,9 @@ class MazeSolver(Node):
         self.yield_escape_heading = None
         self.yield_rear_blocked = False
         self.yield_at_line_end = False
+        # Judge the line end by this yield's own reversing only; the RGB row
+        # may be briefly off the line right after a turn.
+        self.last_path_color_distance = self.distance_total
         self._change_state(YIELDING)
         self.get_logger().debug(
             f'ถอยตามเส้นให้ {peer_name} จนกว่าเขาจะเลี้ยวพ้นทางร่วม')
@@ -744,6 +748,10 @@ class MazeSolver(Node):
                         MAX_TURN, angle_difference(
                             self.last_centered_pose[2], self.pose[2])))
                 return
+            if (self.black_mode and self.state == FOLLOW
+                    and self.last_centered_pose is not None):
+                self._begin_line_end_check()
+                return
             self._begin_line_recovery(self.state)
             self.get_logger().warning(
                 'เส้นหายระหว่างขับ: กลับไปตำแหน่งล่าสุดที่เห็นเส้นชัด')
@@ -960,6 +968,23 @@ class MazeSolver(Node):
         self.get_logger().debug(
             f'ตัวนอกเห็นเส้น: หยุดแล้วเข้ากลางจุดเพื่อหมุนสแกน; '
             f'black={self.sensors.black}')
+        self._change_state(CENTERING)
+
+    def _begin_line_end_check(self):
+        # Black maze: the line vanished, so pivot where it was last centred.
+        # Both sides are swept: nothing found is a dead end (BLOCKED, U-turn),
+        # a single exit is a drift or a bend the outer sensors missed.
+        x, y, yaw = self.last_centered_pose
+        self.center_target = (x + RGB_FRONT_OFFSET_M * math.cos(yaw),
+                              y + RGB_FRONT_OFFSET_M * math.sin(yaw))
+        self.scan_hit_world = self._world_sensor_position()
+        self.scan_sides = {'left', 'right'}
+        self.center_heading = yaw
+        self.scan_returning = self.returning
+        self.junction_entry_pose = self.last_centered_pose
+        self.scan_pending = True
+        self.center_on_axle = True
+        self.get_logger().info('เส้นหาย: กลับไปจุดสุดท้ายที่เห็นเส้นแล้วหมุนสแกน')
         self._change_state(CENTERING)
 
     def _start_junction_scan(self):
@@ -1253,8 +1278,8 @@ class MazeSolver(Node):
                     self.yield_rear_blocked = True
             elif (self.yield_at_line_end or
                   self.distance_total - self.last_path_color_distance >
-                  # Black maze: no paint gaps on the line, so stop at once.
-                  (0.0 if self.black_mode else YIELD_PATH_GAP_M)):
+                  # Black maze: no paint gaps on the line, so stop almost at once.
+                  (YIELD_LINE_END_M if self.black_mode else YIELD_PATH_GAP_M)):
                 # Backed off the end of the line (e.g. last in the start
                 # queue): creep forward until the RGB sees it again, then
                 # hold there for the rest of this yield; spinning would lose

@@ -529,6 +529,49 @@ class BlackJunctionScanTest(unittest.TestCase):
         self.robot.tick()
         self.assertEqual(maze_solver.TURNING, self.node.state)
 
+    def test_line_end_without_wall_turns_back_and_reports_blocked(self):
+        # The branch just stops: no wall for the ultrasonic, no crossbar.
+        self.use_team()
+        branch = {'junction_id': 3, 'direction': 0, 'choice': 'straight',
+                  'request_id': 'r1', 'previous_route_order': None}
+        self.node.active_team_branch = dict(branch)
+        self.drive([INBOUND],
+                   until=lambda: self.node.state == maze_solver.RETURNING)
+        self.assertTrue(self.node.returning)
+        self.assertIn({'type': 'BLOCKED', **branch}, self.reports)
+        self.assertAlmostEqual(0.0, maze_solver.angle_difference(
+            self.node.pose[2], math.pi), delta=0.3)
+
+    def test_drift_off_the_line_finds_it_again_without_turning_back(self):
+        # The line runs 6 cm to the left: every sensor misses it at once.
+        self.robot = FloorHarness(self.node, [(-1.0, 0.06, 1.0, 0.06)], self.clock)
+        self.node.last_centered_pose = self.node.pose
+        self.node._change_state(maze_solver.FOLLOW)
+        for _ in range(300):
+            self.robot.tick()
+            self.assertNotEqual('UTURN', self.node.turn_kind)
+            if (self.node.state == maze_solver.FOLLOW
+                    and self.node.pose[0] > 0.4):
+                break
+        self.assertEqual(maze_solver.FOLLOW, self.node.state)
+        self.assertEqual([], self.node.junctions)
+
+    def test_yield_right_after_a_turn_still_backs_along_the_line(self):
+        # The yield starts before the RGB row has settled back on the line
+        # (e.g. mid branch capture); that is not the end of the line.
+        self.use_team()
+        self.robot = FloorHarness(self.node, [(-1.0, 0.0, 1.0, 0.0)], self.clock)
+        self.node._update_pose(0.5, 0.0, 0.0)
+        self.node.last_path_color_distance = self.node.distance_total - 0.05
+        self.node.sensors.black = [False] * 4
+        start_x = self.node.pose[0]
+        for _ in range(40):
+            self.peer(self.node.pose[0] + 0.5, math.pi, maze_solver.RETURNING)
+            if self.node.state != maze_solver.YIELDING:
+                self.node._begin_yield('mbot0')
+            self.robot.tick()
+        self.assertLess(self.node.pose[0], start_x - 0.15)
+
 
 if __name__ == '__main__':
     unittest.main()
