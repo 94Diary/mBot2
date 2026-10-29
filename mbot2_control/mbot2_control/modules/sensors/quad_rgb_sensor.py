@@ -66,6 +66,9 @@ class QuadRGBArray:
         self.seen = [False, False, False, False]
         self.last_seen_at = [0.0, 0.0, 0.0, 0.0]
         self.rgb = [(0, 0, 0)] * 4
+        # Black-mode junctions: called from the image callback, so a side
+        # branch crossed between two control ticks is not missed.
+        self.on_outer_hit = None
 
         for index, topic in enumerate(TOPICS):
             node.create_subscription(
@@ -78,13 +81,21 @@ class QuadRGBArray:
             r, g, b = image_to_rgb(msg)
             self.rgb[index] = (r, g, b)
             self.black[index] = is_black(r, g, b, self.threshold)
-            self.yellow[index] = (is_green(r, g, b) if self.junction_color == 'green'
-                                  else is_yellow(r, g, b))
+            if self.junction_color == 'black':
+                self.yellow[index] = False  # junctions are plain black lines
+            elif self.junction_color == 'green':
+                self.yellow[index] = is_green(r, g, b)
+            else:
+                self.yellow[index] = is_yellow(r, g, b)
             self.green[index] = (is_red(r, g, b) if self.goal_color == 'red'
                                  else is_green(r, g, b))
             self.blue[index] = is_blue(r, g, b)
             self.seen[index] = True
             self.last_seen_at[index] = time.monotonic()
+            if (self.on_outer_hit is not None
+                    and (self.black[0] or self.black[3])
+                    and (self.black[1] or self.black[2])):
+                self.on_outer_hit()
         return callback
 
     @property

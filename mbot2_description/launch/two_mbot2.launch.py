@@ -95,7 +95,7 @@ def robot_actions(xacro_file, robot_name, x_position, y_position, yaw,
                     'spawn_x': float(x_position),
                     'spawn_y': float(y_position),
                     'spawn_yaw': float(yaw),
-                    'junction_color': 'green',
+                    'junction_color': 'black',  # junctions are plain lines; found by scanning
                     'goal_color': 'red',
                 }],
             )],

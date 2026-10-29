@@ -75,11 +75,17 @@ JUNCTION_APPROACH_MAX_M = 0.40  # yellow warning stripe starts 0.25 m before J
 JUNCTION_APPROACH_ABORT_M = 0.48
 RETURN_MARKER_RADIUS_M = 0.10
 TRAIL_UPDATE_SECONDS = 1.0
+# junction_color='black': stop on an outer-sensor hit, then sweep in place.
+SCAN_LIMIT_RAD = math.radians(130)
+SCAN_STRAIGHT_MAX_RAD = math.radians(40)  # |θ| ≤ 40° is the straight arm
+SCAN_SIDE_MIN_RAD = math.radians(50)      # 50°..130° is a side arm
+CENTER_TOLERANCE_M = 0.02
 
 SEARCH = 'SEARCH'
 FOLLOW = 'FOLLOW'
 APPROACH_JUNCTION = 'APPROACH_JUNCTION'
 JUNCTION_PAUSE = 'JUNCTION_PAUSE'
+JUNCTION_SCAN = 'JUNCTION_SCAN'
 CENTERING = 'CENTERING'
 BRANCH_CAPTURE = 'BRANCH_CAPTURE'
 TURNING = 'TURNING'
@@ -103,8 +109,8 @@ def angle_difference(target, current):
 
 class MazeSolver(Node):
 
-    def __init__(self):
-        super().__init__('maze_solver')
+    def __init__(self, **kwargs):
+        super().__init__('maze_solver', **kwargs)
         self.declare_parameter('junction_choice', 'side_first')
         self.declare_parameter('team_enabled', False)
         self.declare_parameter('use_ground_truth', False)
@@ -173,6 +179,9 @@ class MazeSolver(Node):
         self.timer = self.create_timer(0.1, self.tick)
 
         self.sensors = QuadRGBArray(self)
+        self.black_mode = self.sensors.junction_color == 'black'
+        if self.black_mode:
+            self.sensors.on_outer_hit = self._on_outer_hit
         self.ultrasonic = UltrasonicSensor(self)
         self.encoder = WheelEncoder(self)
 
@@ -200,6 +209,18 @@ class MazeSolver(Node):
         self.junction_candidate = None
         self.junction_candidate_ticks = 0
         self.junction_needs_request = False
+        self.outer_hit_position = None  # local sensor point of a black-mode hit
+        self.outer_hit_world = None
+        self.scan_hit_world = None
+        self.trigger_resume_distance = 0.0
+        self.scan_pending = False
+        self.center_on_axle = False  # black mode: pivot where the scan pivoted
+        self.scan_pivot = None
+        self.scan_returning = False
+        self.center_target = None
+        self.scan_heading = None
+        self.scan_phase = None
+        self.scan_hits = {}
         self.line_search_after = FOLLOW
         self.last_search_log_at = 0.0
         self.align_last_black_at = 0.0
@@ -433,6 +454,7 @@ class MazeSolver(Node):
         if world is None:
             return
         if (self.state == CENTERING and not self.junction_needs_request
+                and not self.scan_pending
                 and self.active_team_branch is not None):
             self._team_report({
                 'type': 'CANCEL_BRANCH',
@@ -451,12 +473,21 @@ class MazeSolver(Node):
             self.team_choice = None
         # Not yet asked: the junction is seen again after the yield.
         self.junction_needs_request = False
+        rescan = self.scan_pending
+        self.scan_pending = False
+        self.center_on_axle = False
         self.yield_start_pose = world[:2]
         self.yield_heading = world[2]
         self.yield_peer_name = peer_name
         if self.state != YIELD_RESUME:
             self.yield_resume_state = RETURNING if self.returning else FOLLOW
             self.yield_resume_target = world[:2]
+            if rescan and self.scan_hit_world is not None:
+                # Come back with the sensors short of the arm so it is hit again.
+                hx, hy = self.scan_hit_world
+                self.yield_resume_target = (
+                    hx - RGB_FRONT_OFFSET_M * math.cos(world[2]),
+                    hy - RGB_FRONT_OFFSET_M * math.sin(world[2]))
         self.yield_peer_was_yielding = self.team_peers.get(
             peer_name, {}).get('state') in (
                 YIELDING, YIELD_TURN, YIELD_ESCAPE, YIELD_WAIT)
@@ -475,30 +506,39 @@ class MazeSolver(Node):
             f'ถอยตามเส้นให้ {peer_name} จนกว่าเขาจะเลี้ยวพ้นทางร่วม')
 
     def _request_team_branch(self, returning, left_open, right_open,
-                             position_override=None, straight_open=True):
+                             position_override=None, straight_open=True,
+                             approach_heading=None, exit_headings=None):
         world = self._world_pose()
         position = position_override or self._world_sensor_position()
         if world is None or position is None:
             return
+        if approach_heading is not None:
+            # A black-mode scan ends rotated; headings come from its start.
+            world = (world[0], world[1], approach_heading)
+        exit_headings = exit_headings or {}
         self.request_sequence += 1
         choices = []
         if not returning and straight_open:
-            choices.append({'name': 'straight', 'heading': world[2]})
+            choices.append({'name': 'straight',
+                            'heading': exit_headings.get('straight', world[2])})
         if left_open:
-            choices.append({'name': 'left', 'heading': world[2] + math.pi / 2})
+            choices.append({'name': 'left', 'heading': exit_headings.get(
+                'left', world[2] + math.pi / 2)})
         if right_open:
-            choices.append({'name': 'right', 'heading': world[2] - math.pi / 2})
+            choices.append({'name': 'right', 'heading': exit_headings.get(
+                'right', world[2] - math.pi / 2)})
         choices.append({'name': 'back', 'heading': world[2] + math.pi})
         if returning and self.junctions:
             node = self.junctions[-1]
             original = node.get('world_heading', world[2] + math.pi)
+            measured = node.get('exit_headings', {})  # black-mode scan
             headings = [(original + math.pi, True)]
             if node.get('straight_open', True):
-                headings.insert(0, (original, False))
+                headings.insert(0, (measured.get('straight', original), False))
             if node['left_open']:
-                headings.append((original + math.pi / 2, False))
+                headings.append((measured.get('left', original + math.pi / 2), False))
             if node['right_open']:
-                headings.append((original - math.pi / 2, False))
+                headings.append((measured.get('right', original - math.pi / 2), False))
             choices = []
             for heading, fallback in headings:
                 turn = angle_difference(heading, world[2])
@@ -671,6 +711,9 @@ class MazeSolver(Node):
             self.get_logger().debug(f'{self.state} -> {state}')
         self.state = state
         self.state_start_time = time.monotonic()
+        # A latched hit belongs to the drive that saw it.
+        self.outer_hit_position = None
+        self.outer_hit_world = None
 
     def _start_turn(self, angle, after, kind):
         if self.pose is None:
@@ -844,43 +887,188 @@ class MazeSolver(Node):
         turn = TURN_GAIN * self._line_error()
         return max(-MAX_TURN, min(MAX_TURN, turn))
 
+    def _remember_junction(self, position, world_position, heading,
+                           world_heading, left_open, right_open):
+        """Push a new outward junction, or reuse the saved one at this spot."""
+        known_index = next((index for index in
+                            range(len(self.junctions) - 1, -1, -1)
+                            if (math.hypot(
+                                world_position[0] - self.junctions[index][
+                                    'world_position'][0],
+                                world_position[1] - self.junctions[index][
+                                    'world_position'][1]) < 0.25
+                                and abs(angle_difference(
+                                    heading, self.junctions[index][
+                                        'heading'])) < 0.6)), None)
+        if known_index is None:
+            self.junction_count += 1
+            self.junctions.append({
+                'id': self.junction_count,
+                'position': position,
+                'world_position': world_position,
+                'heading': heading,
+                'world_heading': world_heading,
+                'left_open': left_open,
+                'right_open': right_open,
+                'straight_open': True,
+            })
+        else:
+            self.junctions = self.junctions[:known_index + 1]
+            node = self.junctions[-1]
+            node['position'] = position
+            node['world_position'] = world_position
+            node['left_open'] |= left_open
+            node['right_open'] |= right_open
+            self.get_logger().debug(f"กลับถึงแยกที่เคยบันทึก J{node['id']}")
+        return self.junctions[-1]
+
+    def _on_outer_hit(self):
+        """Image callback: latch where an outer sensor first touched black."""
+        if (self.outer_hit_position is None and self.pose is not None
+                and self.state in (FOLLOW, RETURNING)
+                and self.distance_total >= self.trigger_resume_distance):
+            self.outer_hit_position = self._sensor_position()
+            self.outer_hit_world = self._world_sensor_position()
+
+    def _begin_black_junction(self):
+        """Bring the wheel axle onto the hit point; the sweep pivots there."""
+        self.center_target = self.outer_hit_position
+        self.scan_hit_world = self.outer_hit_world
+        self.center_heading = self.pose[2]
+        self.scan_returning = self.returning
+        self.junction_entry_pose = self.last_centered_pose or self.pose
+        self.scan_pending = True
+        self.center_on_axle = True
+        self.get_logger().debug(
+            f'ตัวนอกเห็นเส้น: หยุดแล้วเข้ากลางจุดเพื่อหมุนสแกน; '
+            f'black={self.sensors.black}')
+        self._change_state(CENTERING)
+
+    def _start_junction_scan(self):
+        self.scan_pending = False
+        self.center_on_axle = False
+        self.scan_pivot = self._axle_point(self.pose)
+        self.scan_heading = self.pose[2]
+        self.scan_phase = 'LEFT'
+        self.scan_hits = {'straight': [], 'left': [], 'right': []}
+        self._change_state(JUNCTION_SCAN)
+
+    def _scan_junction(self, cmd):
+        """Sweep +130° then -130°, noting where the inner sensors see black."""
+        theta = angle_difference(self.pose[2], self.scan_heading)
+        if self.sensors.black[1] or self.sensors.black[2]:
+            if abs(theta) <= SCAN_STRAIGHT_MAX_RAD:
+                self.scan_hits['straight'].append(theta)
+            elif SCAN_SIDE_MIN_RAD <= theta <= SCAN_LIMIT_RAD:
+                self.scan_hits['left'].append(theta)
+            elif -SCAN_LIMIT_RAD <= theta <= -SCAN_SIDE_MIN_RAD:
+                self.scan_hits['right'].append(theta)
+        if self.scan_phase == 'LEFT' and theta >= SCAN_LIMIT_RAD:
+            self.scan_phase = 'RIGHT'
+        if self.scan_phase == 'LEFT':
+            cmd.angular.z = ROTATE_SPEED
+        elif theta > -SCAN_LIMIT_RAD:
+            cmd.angular.z = -ROTATE_SPEED
+        else:
+            self._finish_junction_scan()
+
+    def _finish_junction_scan(self):
+        exits = {name: sum(angles) / len(angles)
+                 for name, angles in self.scan_hits.items() if angles}
+        h0 = self.scan_heading
+        world_h0 = h0 + angle_difference(self._world_pose()[2], self.pose[2])
+        labels = {'left': 'ซ้าย', 'straight': 'ตรง', 'right': 'ขวา'}
+        self.get_logger().info(
+            'สแกนแยก: ' + ' '.join(
+                f"{labels[name]}={'มี' if name in exits else 'ไม่มี'}"
+                for name in ('left', 'straight', 'right')))
+        self.trigger_resume_distance = (self.distance_total +
+                                        JUNCTION_ESCAPE_DISTANCE_M)
+        if not exits:
+            if self.team_enabled and self.active_team_branch is not None:
+                self._team_report({'type': 'BLOCKED', **self.active_team_branch})
+                self.active_team_branch = None
+            self._trail_event('BLOCKED_BRANCH')
+            self.get_logger().warning('สแกนแล้วไม่มีทางไปต่อ: กลับรถ')
+            self._start_turn(angle_difference(h0 + math.pi, self.pose[2]),
+                             RETURNING, 'UTURN')
+            return
+        if len(exits) == 1:
+            # A corner, or a wobble that touched the line edge: no choice here.
+            (name, theta), = exits.items()
+            self.get_logger().info(f'ทางเดียว ({labels[name]}): ไปต่อโดยไม่ถามทีม')
+            self._start_turn(angle_difference(h0 + theta, self.pose[2]),
+                             RETURNING if self.scan_returning else FOLLOW,
+                             'CORNER')
+            return
+        if self.scan_returning:
+            self._ask_at_missed_junction(exits, h0, world_h0)
+            return
+        node = self._remember_junction(
+            self.scan_pivot, self.scan_hit_world, h0, world_h0,
+            'left' in exits, 'right' in exits)
+        node['straight_open'] = 'straight' in exits
+        node['exit_headings'] = {name: world_h0 + theta
+                                 for name, theta in exits.items()}
+        self.active_junction_world = node['world_position']
+        self.returning = False
+        self._trail_event('JUNCTION')
+        if self.team_enabled:
+            self._request_team_branch(
+                False, node['left_open'], node['right_open'],
+                node['world_position'], straight_open=node['straight_open'],
+                approach_heading=world_h0, exit_headings=node['exit_headings'])
+            self._change_state(JUNCTION_PAUSE)
+            return
+        order = (('left', 'right', 'straight')
+                 if self.junction_choice == 'side_first'
+                 else ('straight', 'left', 'right'))
+        name = next(n for n in order if n in exits)
+        self.branch_angle = angle_difference(h0 + exits[name], self.pose[2])
+        self._leave_junction_center()
+
+    def _ask_at_missed_junction(self, exits, h0, world_h0):
+        # Returning through a junction the outward pass never saved. Store it
+        # as the outward pass saw it (facing h0 + pi): robot-left is
+        # outward-right, and the arm behind is the dead end just explored.
+        self.junction_count += 1
+        node = {
+            'id': self.junction_count,
+            'position': self.scan_pivot,
+            'world_position': self.scan_hit_world,
+            'heading': h0 + math.pi,
+            'world_heading': world_h0 + math.pi,
+            'left_open': 'right' in exits,
+            'right_open': 'left' in exits,
+            'straight_open': False,
+            'exit_headings': {
+                {'left': 'right', 'right': 'left'}[name]: world_h0 + theta
+                for name, theta in exits.items() if name != 'straight'},
+        }
+        self.junctions.append(node)
+        self.active_junction_world = node['world_position']
+        self.get_logger().warning('ขาไปพลาดการบันทึกแยก; สแกนพบตอนขากลับ')
+        self._trail_event('BACK_AT_JUNCTION')
+        # Wheels are already on the centre: leave from here once chosen.
+        self.returning = False
+        if self.team_enabled:
+            self._request_team_branch(
+                True, node['right_open'], node['left_open'],
+                node['world_position'], approach_heading=world_h0)
+            self._change_state(JUNCTION_PAUSE)
+            return
+        name = next((n for n in ('left', 'right', 'straight') if n in exits))
+        self.branch_angle = angle_difference(h0 + exits[name], self.pose[2])
+        self._leave_junction_center()
+
     def _at_junction(self, returning, left_open=False, right_open=False):
         self.junction_entry_pose = self.last_centered_pose or self.pose
         self.get_logger().info(
             f'เห็นแยก: black={self.sensors.black}, yellow={self.sensors.yellow}')
         if not returning:
-            position = self._sensor_position()
-            world_position = self._world_sensor_position()
-            known_index = next((index for index in
-                                range(len(self.junctions) - 1, -1, -1)
-                                if (math.hypot(
-                                    world_position[0] - self.junctions[index][
-                                        'world_position'][0],
-                                    world_position[1] - self.junctions[index][
-                                        'world_position'][1]) < 0.25
-                                    and abs(angle_difference(
-                                        self.pose[2], self.junctions[index][
-                                            'heading'])) < 0.6)), None)
-            if known_index is None:
-                self.junction_count += 1
-                self.junctions.append({
-                    'id': self.junction_count,
-                    'position': position,
-                    'world_position': world_position,
-                    'heading': self.pose[2],
-                    'world_heading': self._world_pose()[2],
-                    'left_open': left_open,
-                    'right_open': right_open,
-                    'straight_open': True,
-                })
-            else:
-                self.junctions = self.junctions[:known_index + 1]
-                node = self.junctions[-1]
-                node['position'] = position
-                node['world_position'] = world_position
-                node['left_open'] |= left_open
-                node['right_open'] |= right_open
-                self.get_logger().debug(f"กลับถึงแยกที่เคยบันทึก J{node['id']}")
+            self._remember_junction(
+                self._sensor_position(), self._world_sensor_position(),
+                self.pose[2], self._world_pose()[2], left_open, right_open)
             self._trail_event('JUNCTION')
             if self.junction_choice == 'side_first':
                 self.branch_angle = math.pi / 2 if left_open else -math.pi / 2
@@ -1106,10 +1294,13 @@ class MazeSolver(Node):
             if abs(error) <= TURN_TOLERANCE_RAD:
                 if self.turn_kind == 'UTURN':
                     self.returning = True
+                    self._new_segment()
+                elif self.turn_kind == 'CORNER':
+                    pass  # same corridor: keep the direction and trail
                 else:
                     self.returning = False
                     self.wait_for_yellow_clear = True
-                self._new_segment()
+                    self._new_segment()
                 self.line_search_after = self.turn_after
                 if self.turn_kind == 'BRANCH':
                     self.branch_capture_heading = self.turn_target
@@ -1129,6 +1320,24 @@ class MazeSolver(Node):
             if self.center_start is None:
                 self.center_start = self.pose[:2]
             world = self._world_pose()
+            if self.center_on_axle:
+                ax, ay = self._axle_point(self.pose)
+                heading = self.center_heading
+                remaining = ((self.center_target[0] - ax) * math.cos(heading) +
+                             (self.center_target[1] - ay) * math.sin(heading))
+                if abs(remaining) <= CENTER_TOLERANCE_M:
+                    if self.scan_pending:
+                        self._start_junction_scan()
+                    else:
+                        self.center_on_axle = False
+                        self._leave_junction_center()
+                else:
+                    # Passed the hit point: back up the few centimetres.
+                    cmd.linear.x = SEARCH_SPEED if remaining > 0 else -SEARCH_SPEED
+                    cmd.angular.z = max(-MAX_TURN, min(
+                        MAX_TURN, 2.0 * angle_difference(heading, self.pose[2])))
+                self.cmd_pub.publish(cmd)
+                return
             if (self.team_enabled and self.use_ground_truth
                     and self.active_junction_world is not None):
                 dx = self.active_junction_world[0] - world[0]
@@ -1149,6 +1358,11 @@ class MazeSolver(Node):
                 cmd.angular.z = max(-MAX_TURN, min(
                     MAX_TURN,
                     2.0 * angle_difference(self.center_heading, self.pose[2])))
+            self.cmd_pub.publish(cmd)
+            return
+
+        if self.state == JUNCTION_SCAN:
+            self._scan_junction(cmd)
             self.cmd_pub.publish(cmd)
             return
 
@@ -1338,6 +1552,20 @@ class MazeSolver(Node):
                 else:
                     cmd.linear.x = SEARCH_SPEED
 
+        if (self.black_mode and self.outer_hit_position is not None
+                and self.state in (FOLLOW, RETURNING)):
+            if (self.returning and self.junctions
+                    and math.hypot(
+                        self.outer_hit_position[0] - self.junctions[-1]['position'][0],
+                        self.outer_hit_position[1] - self.junctions[-1]['position'][1])
+                    <= RETURN_MARKER_RADIUS_M):
+                # The saved junction itself: RETURNING handles it from memory.
+                self.outer_hit_position = None
+            else:
+                self._begin_black_junction()
+                self.cmd_pub.publish(Twist())
+                return
+
         if self.state == RETURNING:
             distance = self._distance_to_junction()
             yellow_now = self.sensors.any_yellow()
@@ -1485,6 +1713,10 @@ class MazeSolver(Node):
                 # before rotating or crossing straight.
                 self.center_start = self.pose[:2]
                 self.center_heading = self.pose[2]
+                if self.black_mode:
+                    # Exit headings were measured from the scan pivot.
+                    self.center_target = self.junctions[-1]['position']
+                    self.center_on_axle = True
                 self._change_state(CENTERING)
 
         if (self.trail_id and (self.sensors.any_black() or self.sensors.any_yellow())
