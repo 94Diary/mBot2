@@ -81,6 +81,8 @@ SCAN_LIMIT_RAD = math.radians(130)
 SCAN_STRAIGHT_MAX_RAD = math.radians(40)  # |θ| ≤ 40° is the straight arm
 SCAN_SIDE_MIN_RAD = math.radians(50)      # 50°..130° is a side arm
 CENTER_TOLERANCE_M = 0.02
+KNOWN_NODE_RADIUS_M = 0.10      # pivot is within ~2 cm of a real node
+TEAM_MAP_FRESH_SECONDS = 1.0    # state arrives every 0.5 s
 
 SEARCH = 'SEARCH'
 FOLLOW = 'FOLLOW'
@@ -142,6 +144,7 @@ class MazeSolver(Node):
         self.active_junction_world = None
         self.team_goal = None
         self.team_peers = {}
+        self.team_nodes = []  # shared map from /maze_team/state
         self.team_route_order = None
         self.team_route_order_local = False
         self.last_team_pose_at = 0.0
@@ -218,11 +221,13 @@ class MazeSolver(Node):
         self.outer_hit_world = None
         self.outer_hit_sides = set()  # 'left' (sensor 1) / 'right' (sensor 4)
         self.scan_sides = set()
+        self.scan_from_line_end = False
         self.scan_hit_world = None
         self.trigger_resume_distance = 0.0
         self.scan_pending = False
         self.center_on_axle = False  # black mode: pivot where the scan pivoted
         self.scan_pivot = None
+        self.scan_pivot_world = None
         self.scan_returning = False
         self.center_target = None
         self.scan_heading = None
@@ -327,6 +332,7 @@ class MazeSolver(Node):
         try:
             data = json.loads(msg.data)
             self.team_goal = data.get('goal')
+            self.team_nodes = data.get('junctions', [])
             self.team_peers = {
                 name: position for name, position in data.get('robots', {}).items()
                 if name != self.robot_id
@@ -960,6 +966,7 @@ class MazeSolver(Node):
         self.center_target = self.outer_hit_position
         self.scan_hit_world = self.outer_hit_world
         self.scan_sides = set(self.outer_hit_sides)
+        self.scan_from_line_end = False
         self.center_heading = self.pose[2]
         self.scan_returning = self.returning
         self.junction_entry_pose = self.last_centered_pose or self.pose
@@ -970,6 +977,12 @@ class MazeSolver(Node):
             f'black={self.sensors.black}')
         self._change_state(CENTERING)
 
+    def _report_node(self, kind, position, approach_heading, **extra):
+        """Tell the team map about a start, corner or dead end."""
+        self._team_report({'type': 'NODE', 'kind': kind,
+                           'x': position[0], 'y': position[1],
+                           'approach_heading': approach_heading, **extra})
+
     def _begin_line_end_check(self):
         # Black maze: the line vanished, so pivot where it was last centred.
         # Both sides are swept: nothing found is a dead end (BLOCKED, U-turn),
@@ -979,6 +992,7 @@ class MazeSolver(Node):
                               y + RGB_FRONT_OFFSET_M * math.sin(yaw))
         self.scan_hit_world = self._world_sensor_position()
         self.scan_sides = {'left', 'right'}
+        self.scan_from_line_end = True  # not at a node: never trust the map
         self.center_heading = yaw
         self.scan_returning = self.returning
         self.junction_entry_pose = self.last_centered_pose
@@ -991,6 +1005,7 @@ class MazeSolver(Node):
         self.scan_pending = False
         self.center_on_axle = False
         self.scan_pivot = self._axle_point(self.pose)
+        self.scan_pivot_world = self._axle_point(self._world_pose())
         self.scan_heading = self.pose[2]
         self.scan_hits = {'straight': [], 'left': [], 'right': []}
         # Wheels on the centre: the inner sensors already sit over the
@@ -999,18 +1014,25 @@ class MazeSolver(Node):
             self.scan_hits['straight'].append(0.0)
         self.scan_phases = [side for side in ('left', 'right')
                             if side in self.scan_sides]
+        known = (None if self.scan_from_line_end
+                 else self._known_node(self.scan_pivot_world))
+        if known is not None:
+            # The team already mapped this place: use its exits, no sweep.
+            world_h0 = self._world_pose()[2]
+            self.scan_hits = {'straight': [], 'left': [], 'right': []}
+            for key, branch in known['branches'].items():
+                heading = branch.get('heading', int(key) * math.pi / 2)
+                self._bin_scan_angle(angle_difference(heading, world_h0))
+            self.get_logger().info(f"ใช้ข้อมูลทีมที่ J{known['id']}: ไม่ต้องหมุนสแกน")
+            self._finish_junction_scan()
+            return
         self._change_state(JUNCTION_SCAN)
 
     def _scan_junction(self, cmd):
         """Sweep to ±130° on each touched side, noting inner-sensor black."""
         theta = angle_difference(self.pose[2], self.scan_heading)
         if self.sensors.black[1] or self.sensors.black[2]:
-            if abs(theta) <= SCAN_STRAIGHT_MAX_RAD:
-                self.scan_hits['straight'].append(theta)
-            elif SCAN_SIDE_MIN_RAD <= theta <= SCAN_LIMIT_RAD:
-                self.scan_hits['left'].append(theta)
-            elif -SCAN_LIMIT_RAD <= theta <= -SCAN_SIDE_MIN_RAD:
-                self.scan_hits['right'].append(theta)
+            self._bin_scan_angle(theta)
         while self.scan_phases and (
                 (self.scan_phases[0] == 'left' and theta >= SCAN_LIMIT_RAD) or
                 (self.scan_phases[0] == 'right' and theta <= -SCAN_LIMIT_RAD)):
@@ -1020,6 +1042,29 @@ class MazeSolver(Node):
         else:
             cmd.angular.z = (ROTATE_SPEED if self.scan_phases[0] == 'left'
                              else -ROTATE_SPEED)
+
+    def _bin_scan_angle(self, theta):
+        """File an exit angle; the way in (about 180 deg) fits no window."""
+        if abs(theta) <= SCAN_STRAIGHT_MAX_RAD:
+            self.scan_hits['straight'].append(theta)
+        elif SCAN_SIDE_MIN_RAD <= theta <= SCAN_LIMIT_RAD:
+            self.scan_hits['left'].append(theta)
+        elif -SCAN_LIMIT_RAD <= theta <= -SCAN_SIDE_MIN_RAD:
+            self.scan_hits['right'].append(theta)
+
+    def _known_node(self, world_xy):
+        """Nearest mapped junction or corner, while the team map is fresh."""
+        if (not self.team_enabled or world_xy is None or
+                time.monotonic() - self.last_team_state_at > TEAM_MAP_FRESH_SECONDS):
+            return None
+        best = None
+        for node in self.team_nodes:
+            if node.get('kind') not in ('JUNCTION', 'CORNER'):
+                continue
+            distance = math.hypot(node['x'] - world_xy[0], node['y'] - world_xy[1])
+            if distance <= KNOWN_NODE_RADIUS_M and (best is None or distance < best[0]):
+                best = (distance, node)
+        return best[1] if best else None
 
     def _finish_junction_scan(self):
         exits = {name: sum(angles) / len(angles)
@@ -1037,6 +1082,7 @@ class MazeSolver(Node):
             if self.team_enabled and self.active_team_branch is not None:
                 self._team_report({'type': 'BLOCKED', **self.active_team_branch})
                 self.active_team_branch = None
+            self._report_node('DEAD_END', self.scan_pivot_world, world_h0)
             self._trail_event('BLOCKED_BRANCH')
             self.get_logger().warning('สแกนแล้วไม่มีทางไปต่อ: กลับรถ')
             self._start_turn(angle_difference(h0 + math.pi, self.pose[2]),
@@ -1046,6 +1092,9 @@ class MazeSolver(Node):
             # A corner, or a wobble that touched the line edge: no choice here.
             (name, theta), = exits.items()
             self.get_logger().info(f'ทางเดียว ({labels[name]}): ไปต่อโดยไม่ถามทีม')
+            if name != 'straight':  # straight only: a wobble, not a place
+                self._report_node('CORNER', self.scan_pivot_world, world_h0,
+                                  exit_heading=world_h0 + theta)
             self._start_turn(angle_difference(h0 + theta, self.pose[2]),
                              RETURNING if self.scan_returning else FOLLOW,
                              'CORNER')
@@ -1423,7 +1472,8 @@ class MazeSolver(Node):
         if self.sensors.any_green():
             if self.team_enabled:
                 world = self._world_pose()
-                self._team_report({'type': 'GOAL', 'x': world[0], 'y': world[1]})
+                self._team_report({'type': 'GOAL', 'x': world[0], 'y': world[1],
+                                   'approach_heading': world[2]})
             self._trail_event('GOAL')
             self._change_state(GOAL_REACHED)
             self.cmd_pub.publish(cmd)
@@ -1476,6 +1526,8 @@ class MazeSolver(Node):
                 if self.team_enabled and self.active_team_branch is not None:
                     self._team_report({'type': 'BLOCKED', **self.active_team_branch})
                     self.active_team_branch = None
+                world = self._world_pose()
+                self._report_node('DEAD_END', world[:2], world[2])
                 self._trail_event('BLOCKED_BRANCH')
                 self._change_state(REVERSING)
                 self.get_logger().warning('เจอกำแพง: ถอยสั้น หมุนกลับ แล้วตามเส้นย้อน')
@@ -1596,6 +1648,9 @@ class MazeSolver(Node):
         if self.state == SEARCH:
             if self.sensors.any_black():
                 self.get_logger().info('ออกจากจุดเริ่มสีฟ้าและพบเส้นดำแล้ว')
+                world = self._world_pose()
+                self._report_node('START', self._world_sensor_position(),
+                                  world[2], heading=world[2])
                 self._new_segment()
                 self._change_state(FOLLOW)
             else:

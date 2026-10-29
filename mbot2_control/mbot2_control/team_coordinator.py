@@ -4,6 +4,7 @@ The wire format is JSON in std_msgs/String. The ledger is deliberately free of
 ROS imports so its decisions can be unit-tested without Gazebo or ROS running.
 """
 
+import heapq
 import json
 import math
 import time
@@ -38,6 +39,10 @@ class TeamLedger:
         self.robots = {}
         self.goal = None
         self.decisions = {}
+        # Shared map: where each robot left its last node, and links that
+        # contradicted an earlier one (kept out of the map, reported).
+        self.trails = {}
+        self.link_conflicts = []
 
     def update_pose(self, report, now):
         robot = report['robot']
@@ -62,14 +67,100 @@ class TeamLedger:
             'seen_at': now,
         }
 
-    def _junction(self, x, y):
-        for node in self.junctions.values():
-            if math.hypot(node['x'] - x, node['y'] - y) <= self.match_radius:
-                return node
+    def _junction(self, x, y, kind='JUNCTION'):
+        if kind == 'START':
+            # Robots leave the start box at different points: one START.
+            start = next((n for n in self.junctions.values()
+                          if n['kind'] == 'START'), None)
+            if start is not None:
+                return start
+        else:
+            for node in self.junctions.values():
+                if (node['kind'] != 'START' and
+                        math.hypot(node['x'] - x, node['y'] - y) <= self.match_radius):
+                    if kind == 'JUNCTION':
+                        node['kind'] = 'JUNCTION'  # a corner with a third arm
+                    return node
         node_id = self.next_junction_id
         self.next_junction_id += 1
-        node = {'id': node_id, 'x': x, 'y': y, 'branches': {}}
+        node = {'id': node_id, 'kind': kind, 'x': x, 'y': y, 'branches': {}}
         self.junctions[node_id] = node
+        return node
+
+    @staticmethod
+    def _branch(node, key, heading=None):
+        branch = node['branches'].setdefault(
+            key, {'status': 'OPEN', 'owner': None, 'visited_by': []})
+        branch.setdefault('leads_to', None)
+        if heading is not None and 'heading' not in branch:
+            branch['heading'] = float(heading)
+        return branch
+
+    def _link(self, robot, node, approach_heading):
+        """Join the branch this robot last left by to its way into node."""
+        enter = direction_key(float(approach_heading) + math.pi)
+        self._branch(node, enter, float(approach_heading) + math.pi)
+        trail = self.trails.get(robot)
+        if trail is None or trail[0] == node['id'] or trail[0] not in self.junctions:
+            return
+        previous, exit_dir = self.junctions[trail[0]], trail[1]
+        out_branch = self._branch(previous, exit_dir)
+        in_branch = node['branches'][enter]
+        there = {'node': node['id'], 'enter_dir': enter}
+        back = {'node': previous['id'], 'enter_dir': exit_dir}
+        far = out_branch['leads_to']
+        if (far not in (None, there) and in_branch['leads_to'] is None
+                and self._split_edge(previous, exit_dir, node, enter, far)):
+            return  # node sat unnoticed on a link recorded earlier
+        if (out_branch['leads_to'] not in (None, there) or
+                in_branch['leads_to'] not in (None, back)):
+            # e.g. a robot backing through a node while yielding
+            self.link_conflicts.append(
+                f"{robot}: J{previous['id']}/{exit_dir} -> J{node['id']}/{enter} "
+                f"contradicts {out_branch['leads_to']} / {in_branch['leads_to']}")
+            return
+        out_branch['leads_to'] = there
+        in_branch['leads_to'] = back
+
+    def _split_edge(self, previous, exit_dir, node, enter, far_link):
+        """Insert node into the link previous/exit_dir -> far when it lies on it."""
+        far = self.junctions.get(far_link['node'])
+        if far is None or far['id'] == node['id']:
+            return False
+        detour = (math.hypot(node['x'] - previous['x'], node['y'] - previous['y']) +
+                  math.hypot(far['x'] - node['x'], far['y'] - node['y']) -
+                  math.hypot(far['x'] - previous['x'], far['y'] - previous['y']))
+        if detour > 0.1:
+            return False
+        heading = math.atan2(far['y'] - node['y'], far['x'] - node['x'])
+        onward = self._branch(node, direction_key(heading), heading)
+        far_branch = far['branches'].get(far_link['enter_dir'])
+        if onward['leads_to'] is not None or far_branch is None:
+            return False
+        previous['branches'][exit_dir]['leads_to'] = {'node': node['id'], 'enter_dir': enter}
+        node['branches'][enter]['leads_to'] = {'node': previous['id'], 'enter_dir': exit_dir}
+        onward['leads_to'] = dict(far_link)
+        far_branch['leads_to'] = {'node': node['id'], 'enter_dir': direction_key(heading)}
+        return True
+
+    def report_node(self, report, now):
+        """Record a start, corner or dead end a robot reached."""
+        robot = report['robot']
+        kind = report['kind']
+        node = self._junction(float(report['x']), float(report['y']), kind)
+        approach = float(report['approach_heading'])
+        if kind == 'START':
+            heading = float(report.get('heading', approach))
+            self._branch(node, direction_key(heading), heading)
+            self.trails[robot] = (node['id'], direction_key(heading))
+            return node
+        self._link(robot, node, approach)
+        if kind == 'CORNER':
+            exit_heading = float(report['exit_heading'])
+            self._branch(node, direction_key(exit_heading), exit_heading)
+            self.trails[robot] = (node['id'], direction_key(exit_heading))
+        else:  # DEAD_END: the robot turns back the way it came
+            self.trails[robot] = (node['id'], direction_key(approach + math.pi))
         return node
 
     def request_branch(self, report, now):
@@ -80,6 +171,8 @@ class TeamLedger:
             return self.decisions[token]
 
         node = self._junction(float(report['x']), float(report['y']))
+        if report.get('approach_heading') is not None:
+            self._link(robot, node, report['approach_heading'])
         # Arriving along a corridor is evidence that it has already been used.
         # Without this, a later approach from the opposite side can mistake
         # the original entrance for an unexplored straight-ahead branch.
@@ -96,8 +189,7 @@ class TeamLedger:
         branch_details = []
         for option in report['choices']:
             key = direction_key(float(option['heading']))
-            branch = node['branches'].setdefault(
-                key, {'status': 'OPEN', 'owner': None, 'visited_by': []})
+            branch = self._branch(node, key, option['heading'])
             branch_details.append({
                 'name': option['name'], 'status': branch['status'],
                 'visited_by': list(branch['visited_by']),
@@ -164,6 +256,7 @@ class TeamLedger:
                 branch['status'] = 'CLAIMED'
             if robot not in branch['visited_by']:
                 branch['visited_by'].append(robot)
+            self.trails[robot] = (node['id'], key)
             route_order = self.next_route_order
             self.next_route_order += 1
             result = {'robot': robot, 'request_id': request_id,
@@ -176,6 +269,46 @@ class TeamLedger:
         result['branches'] = branch_details
         self.decisions[token] = result
         return result
+
+    def route(self, from_node, to_node):
+        """Shortest known path as [{'node', 'exit_dir', 'heading'}, ...]."""
+        # One step per node before the destination; [] when already there,
+        # None when the known, unblocked links do not reach it.
+        if from_node not in self.junctions or to_node not in self.junctions:
+            return None
+        best = {from_node: 0.0}
+        came_from = {}
+        queue = [(0.0, from_node)]
+        while queue:
+            cost, node_id = heapq.heappop(queue)
+            if node_id == to_node:
+                break
+            if cost > best[node_id]:
+                continue
+            node = self.junctions[node_id]
+            for key, branch in node['branches'].items():
+                link = branch.get('leads_to')
+                if link is None or branch['status'] == 'BLOCKED':
+                    continue
+                other = self.junctions.get(link['node'])
+                if other is None:
+                    continue
+                step = cost + math.hypot(other['x'] - node['x'], other['y'] - node['y'])
+                if step < best.get(other['id'], math.inf):
+                    best[other['id']] = step
+                    came_from[other['id']] = (node_id, key)
+                    heapq.heappush(queue, (step, other['id']))
+        if to_node not in best:
+            return None
+        steps = []
+        node_id = to_node
+        while node_id != from_node:
+            previous, key = came_from[node_id]
+            branch = self.junctions[previous]['branches'][key]
+            steps.append({'node': previous, 'exit_dir': key,
+                          'heading': branch.get('heading', key * math.pi / 2)})
+            node_id = previous
+        return steps[::-1]
 
     def cancel_branch(self, report):
         """Release a junction choice when its robot has to yield before moving."""
@@ -219,6 +352,9 @@ class TeamLedger:
         if self.goal is None:
             self.goal = {'robot': report['robot'],
                          'x': float(report['x']), 'y': float(report['y'])}
+            node = self._junction(self.goal['x'], self.goal['y'], 'GOAL')
+            if report.get('approach_heading') is not None:
+                self._link(report['robot'], node, report['approach_heading'])
 
     def snapshot(self, now):
         return {
@@ -285,6 +421,12 @@ class TeamCoordinator(Node):
                 self._publish_state()
             elif kind == 'CANCEL_BRANCH':
                 self.ledger.cancel_branch(report)
+                self._publish_state()
+            elif kind == 'NODE':
+                conflicts = len(self.ledger.link_conflicts)
+                self.ledger.report_node(report, now)
+                for line in self.ledger.link_conflicts[conflicts:]:
+                    self.get_logger().warning(f'map link ignored: {line}')
                 self._publish_state()
             elif kind == 'GOAL':
                 self.ledger.set_goal(report)

@@ -93,6 +93,7 @@ class FloorHarness:
     """Real MazeSolver over a drawn black floor; sensors fire as callbacks."""
 
     SUBSTEPS = 5
+    team_state_age = 0.0  # seconds since the last /maze_team/state
 
     def __init__(self, node, segments, clock=None):
         self.node = node
@@ -117,7 +118,7 @@ class FloorHarness:
         now = time.monotonic()
         self.node.ultrasonic.last_seen_at = now
         self.node.last_odom_at = now
-        self.node.last_team_state_at = now
+        self.node.last_team_state_at = now - self.team_state_age
         self.node.tick()
         cmd = self.sent[-1]
         if self.clock is not None:
@@ -164,8 +165,10 @@ class BlackJunctionScanTest(unittest.TestCase):
         self.node.team_enabled = True
         self.node._team_report = self.reports.append
 
-    def drive(self, segments, until, max_ticks=600, state=maze_solver.FOLLOW):
+    def drive(self, segments, until, max_ticks=600, state=maze_solver.FOLLOW,
+              team_state_age=0.0):
         self.robot = FloorHarness(self.node, segments, self.clock)
+        self.robot.team_state_age = team_state_age
         self.node._change_state(state)
         self.scan_rotation = 0.0
         for _ in range(max_ticks):
@@ -571,6 +574,104 @@ class BlackJunctionScanTest(unittest.TestCase):
                 self.node._begin_yield('mbot0')
             self.robot.tick()
         self.assertLess(self.node.pose[0], start_x - 0.15)
+
+    def node_reports(self, kind):
+        return [r for r in self.reports
+                if r.get('type') == 'NODE' and r.get('kind') == kind]
+
+    def test_new_corner_is_reported(self):
+        self.use_team()
+        self.drive([INBOUND, LEFT], until=self.back_on_line_after(y_min=0.2))
+        corners = self.node_reports('CORNER')
+        self.assertEqual(1, len(corners))
+        self.assertAlmostEqual(math.pi / 2, corners[0]['exit_heading'], delta=0.35)
+        self.assertAlmostEqual(0.0, corners[0]['approach_heading'], delta=0.1)
+        self.assertAlmostEqual(0.5, corners[0]['x'], delta=0.03)
+
+    def test_false_trigger_is_not_reported(self):
+        self.use_team()
+        speck = (0.5, 0.025, 0.5, 0.035)
+        self.drive([INBOUND, STRAIGHT, speck],
+                   until=self.back_on_line_after(x_min=0.75))
+        self.assertEqual([], self.node_reports('CORNER'))
+
+    def test_line_end_reports_dead_end(self):
+        self.use_team()
+        self.drive([INBOUND],
+                   until=lambda: self.node.state == maze_solver.RETURNING)
+        dead = self.node_reports('DEAD_END')
+        self.assertEqual(1, len(dead))
+        self.assertAlmostEqual(0.0, dead[0]['approach_heading'], delta=0.1)
+
+    def test_leaving_start_box_reports_start(self):
+        self.use_team()
+        self.drive([INBOUND], state=maze_solver.SEARCH,
+                   until=lambda: self.node.state == maze_solver.FOLLOW)
+        start = self.node_reports('START')
+        self.assertEqual(1, len(start))
+        self.assertAlmostEqual(0.0, start[0]['heading'], delta=0.1)
+
+    def team_node(self, kind, *headings):
+        self.node.team_nodes = [{
+            'id': 7, 'kind': kind, 'x': 0.5, 'y': 0.0,
+            'branches': {str(round(h / (math.pi / 2)) % 4): {
+                'status': 'OPEN', 'heading': h, 'leads_to': None}
+                for h in headings}}]
+
+    def test_known_junction_is_not_scanned(self):
+        self.use_team()
+        self.team_node('JUNCTION', math.pi, 0.0, math.pi / 2)
+        self.drive([INBOUND, STRAIGHT, LEFT],
+                   until=lambda: self.node.state == maze_solver.JUNCTION_PAUSE)
+        self.assertLess(self.scan_rotation, 0.1)
+        names = {c['name'] for c in self.branch_requests()[-1]['choices']}
+        self.assertEqual({'straight', 'left', 'back'}, names)
+
+    def test_known_junction_from_other_side_offers_other_branches(self):
+        # Same junction, now reached down its north arm (heading south).
+        self.use_team()
+        self.team_node('JUNCTION', math.pi, 0.0, math.pi / 2)
+        self.node._update_pose(0.5, 0.7, -math.pi / 2)
+        self.drive([(0.5, 1.2, 0.5, 0.0), (-1.0, 0.0, 1.0, 0.0)],
+                   until=lambda: self.node.state == maze_solver.JUNCTION_PAUSE)
+        self.assertLess(self.scan_rotation, 0.1)
+        choices = {c['name']: c['heading']
+                   for c in self.branch_requests()[-1]['choices']}
+        self.assertEqual({'left', 'right', 'back'}, set(choices))
+        self.assertAlmostEqual(0.0, choices['left'], delta=0.05)
+
+    def test_known_corner_turns_without_scan(self):
+        self.use_team()
+        self.team_node('CORNER', math.pi, math.pi / 2)
+        self.drive([INBOUND, LEFT], until=self.back_on_line_after(y_min=0.2))
+        self.assertLess(self.scan_rotation, 0.1)
+        self.assertEqual(1, len(self.node_reports('CORNER')))
+        self.assertAlmostEqual(0.0, maze_solver.angle_difference(
+            self.node.pose[2], math.pi / 2), delta=0.3)
+
+    def test_stale_team_map_scans(self):
+        self.use_team()
+        self.team_node('JUNCTION', math.pi, 0.0, math.pi / 2)
+        self.drive([INBOUND, STRAIGHT, LEFT], team_state_age=2.0,
+                   until=lambda: self.node.state == maze_solver.JUNCTION_PAUSE)
+        self.assertGreater(self.scan_rotation, 1.0)
+
+    def test_known_node_needs_the_robot_at_the_node(self):
+        self.use_team()
+        self.team_node('CORNER', math.pi, math.pi / 2)
+        self.node.last_team_state_at = time.monotonic()
+        self.assertIsNone(self.node._known_node((0.3, 0.0)))
+        self.assertIsNotNone(self.node._known_node((0.47, 0.0)))
+
+    def test_line_end_near_known_corner_still_sweeps(self):
+        # The line ends 18 cm short of a mapped corner: a dead end here,
+        # not the corner, so the robot must not turn onto the corner's exit.
+        self.use_team()
+        self.team_node('CORNER', math.pi, math.pi / 2)
+        self.drive([(-1.0, 0.0, 0.32, 0.0)],
+                   until=lambda: self.node.state == maze_solver.RETURNING)
+        self.assertEqual([], self.node_reports('CORNER'))
+        self.assertEqual(1, len(self.node_reports('DEAD_END')))
 
 
 if __name__ == '__main__':
