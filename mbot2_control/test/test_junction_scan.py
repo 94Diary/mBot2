@@ -3,6 +3,7 @@
 import math
 import time
 import unittest
+from unittest import mock
 
 import rclpy
 from rclpy.node import Node
@@ -93,8 +94,9 @@ class FloorHarness:
 
     SUBSTEPS = 5
 
-    def __init__(self, node, segments):
+    def __init__(self, node, segments, clock=None):
         self.node = node
+        self.clock = clock
         self.segments = segments
         self.sent = []
         node.cmd_pub.publish = self.sent.append
@@ -118,6 +120,8 @@ class FloorHarness:
         self.node.last_team_state_at = now
         self.node.tick()
         cmd = self.sent[-1]
+        if self.clock is not None:
+            self.clock[0] += dt
         axle = maze_solver.WHEEL_X_OFFSET_M
         for _ in range(self.SUBSTEPS):
             x, y, yaw = self.node.pose
@@ -142,6 +146,12 @@ class BlackJunctionScanTest(unittest.TestCase):
         rclpy.shutdown()
 
     def setUp(self):
+        # Simulated clock: speed ramps and pauses must not depend on how fast
+        # the test machine runs.
+        self.clock = [1000.0]
+        patcher = mock.patch.object(time, 'monotonic', lambda: self.clock[0])
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.node = MazeSolver(parameter_overrides=[
             Parameter('junction_color', value='black')])
         self.node._update_pose(0.0, 0.0, 0.0)
@@ -155,7 +165,7 @@ class BlackJunctionScanTest(unittest.TestCase):
         self.node._team_report = self.reports.append
 
     def drive(self, segments, until, max_ticks=600, state=maze_solver.FOLLOW):
-        self.robot = FloorHarness(self.node, segments)
+        self.robot = FloorHarness(self.node, segments, self.clock)
         self.node._change_state(state)
         self.scan_rotation = 0.0
         for _ in range(max_ticks):
@@ -198,8 +208,9 @@ class BlackJunctionScanTest(unittest.TestCase):
         self.assertEqual({'straight', 'left', 'back'}, set(choices))
         self.assertAlmostEqual(0.0, maze_solver.angle_difference(
             choices['straight'], 0.0), delta=0.15)
-        # Measured, not snapped: the hit point is the near edge of the arm.
-        self.assertAlmostEqual(math.pi / 2, choices['left'], delta=0.25)
+        # Measured, not snapped: the hit point is the near edge of the arm and
+        # the axle stops up to 2 cm short, so the arm reads nearer 73 deg.
+        self.assertAlmostEqual(math.pi / 2, choices['left'], delta=0.35)
         self.assertAlmostEqual(0.0, maze_solver.angle_difference(
             choices['back'], math.pi), delta=0.15)
 
@@ -371,6 +382,64 @@ class BlackJunctionScanTest(unittest.TestCase):
         sensor_x = (self.node.yield_resume_target[0] - 0.06 +
                     maze_solver.RGB_FRONT_OFFSET_M)
         self.assertLess(sensor_x, 0.5 - 0.02)  # arm still ahead: hit again
+
+    def peer(self, x, heading, state):
+        self.node.team_peers = {'mbot0': {
+            'x': x, 'y': 0.0, 'heading': heading, 'state': state,
+            'route_order': 0}}
+
+    def test_scanning_peer_is_not_taken_for_head_on(self):
+        # A robot sweeping to +-130 deg at a junction ahead is not coming back.
+        self.use_team()
+        self.peer(0.6, math.radians(130), maze_solver.JUNCTION_SCAN)
+        self.assertIsNone(self.node._head_on_peer())
+        self.peer(0.6, math.pi, maze_solver.RETURNING)
+        self.assertIsNotNone(self.node._head_on_peer())
+
+    def test_peer_waiting_at_junction_after_scan_is_not_head_on(self):
+        # The sweep ends at -130 deg; the robot then waits there for the team.
+        self.use_team()
+        for state in (maze_solver.JUNCTION_PAUSE, maze_solver.CENTERING):
+            self.peer(0.6, math.radians(-130), state)
+            self.assertIsNone(self.node._head_on_peer(), state)
+
+    def test_waits_behind_scanning_peer_instead_of_yielding(self):
+        self.use_team()
+        self.robot = FloorHarness(self.node, [(-1.0, 0.0, 1.0, 0.0)], self.clock)
+        self.node._change_state(maze_solver.FOLLOW)
+        self.node.ultrasonic.distance_m = 0.2
+        for _ in range(20):
+            self.peer(self.node.pose[0] + 0.3, math.radians(130),
+                      maze_solver.JUNCTION_SCAN)
+            self.robot.tick()
+            self.assertNotEqual(maze_solver.YIELDING, self.node.state)
+        self.assertEqual(0.0, self.robot.sent[-1].linear.x)
+
+    def test_yield_stops_at_the_end_of_the_line(self):
+        # Last robot in the start queue: the line ends just behind it.
+        self.use_team()
+        self.robot = FloorHarness(self.node, [(-0.10, 0.0, 1.0, 0.0)], self.clock)
+        self.peer(0.6, math.pi, maze_solver.RETURNING)
+        self.node._begin_yield('mbot0')
+        for _ in range(100):
+            # The returning robot keeps pressing in, so the yield never clears.
+            self.peer(self.node.pose[0] + 0.5, math.pi, maze_solver.RETURNING)
+            before = self.node.pose[2]
+            self.robot.tick()
+            self.assertLess(abs(maze_solver.angle_difference(
+                self.node.pose[2], before)), 0.05)  # no spinning on the spot
+        self.assertEqual(maze_solver.YIELDING, self.node.state)
+        sensor_x = self.node._sensor_position()[0]
+        self.assertGreater(sensor_x, -0.10 - maze_solver.PATH_COLOR_GRACE_M - 0.03)
+        self.assertEqual(0.0, self.robot.sent[-1].linear.x)
+        # The returning robot turns off; this one drives back without a search.
+        for _ in range(200):
+            self.peer(self.node.pose[0] - 1.0, math.pi, maze_solver.FOLLOW)
+            self.robot.tick()
+            self.assertNotEqual(maze_solver.LINE_LOST, self.node.state)
+            if self.node.state == maze_solver.FOLLOW:
+                break
+        self.assertEqual(maze_solver.FOLLOW, self.node.state)
 
 
 if __name__ == '__main__':

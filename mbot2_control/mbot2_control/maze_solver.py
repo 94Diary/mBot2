@@ -100,6 +100,10 @@ YIELD_TURN = 'YIELD_TURN'
 YIELD_ESCAPE = 'YIELD_ESCAPE'
 YIELD_WAIT = 'YIELD_WAIT'
 GOAL_REACHED = 'GOAL_REACHED'
+# A peer stopped or turning on the spot at a junction points anywhere (a
+# scan ends at -130 deg); its heading says nothing about whether it is
+# coming back down this corridor.
+PIVOTING_STATES = (CENTERING, JUNCTION_SCAN, JUNCTION_PAUSE, TURNING)
 
 
 def angle_difference(target, current):
@@ -229,7 +233,7 @@ class MazeSolver(Node):
         self.last_centered_pose = None
         self.last_path_color_distance = 0.0
         self.yield_line_missing_logged = False
-        self.yield_scan_direction = 1
+        self.yield_at_line_end = False
         self.line_lost_anchor = None
         self.line_lost_phase = None
         self.line_lost_turn_direction = 1
@@ -392,6 +396,8 @@ class MazeSolver(Node):
             forward = dx * math.cos(pose[2]) + dy * math.sin(pose[2])
             side = abs(-dx * math.sin(pose[2]) + dy * math.cos(pose[2]))
             opposite = abs(angle_difference(peer['heading'], pose[2]))
+            if peer.get('state') in PIVOTING_STATES:
+                continue
             if (0.0 < forward < HEAD_ON_DETECT_M and side < 0.32
                     and opposite > HEAD_ON_HEADING_RAD):
                 if closest is None or forward < closest[2]:
@@ -500,7 +506,7 @@ class MazeSolver(Node):
                 self.yield_junction_world = (peer_junction['x'], peer_junction['y'])
         self.yield_escape_heading = None
         self.yield_rear_blocked = False
-        self.yield_scan_direction = 1
+        self.yield_at_line_end = False
         self._change_state(YIELDING)
         self.get_logger().debug(
             f'ถอยตามเส้นให้ {peer_name} จนกว่าเขาจะเลี้ยวพ้นทางร่วม')
@@ -1222,20 +1228,19 @@ class MazeSolver(Node):
                 if not self.yield_rear_blocked:
                     self.get_logger().warning('มีหุ่นด้านหลัง หยุดก่อนถอยหลีกทาง')
                     self.yield_rear_blocked = True
-            elif (self.distance_total - self.last_path_color_distance >
-                  YIELD_PATH_GAP_M):
-                if not self.yield_line_missing_logged:
+            elif (self.yield_at_line_end or
+                  self.distance_total - self.last_path_color_distance >
+                  (PATH_COLOR_GRACE_M if self.black_mode else YIELD_PATH_GAP_M)):
+                # Backed off the end of the line (e.g. last in the start
+                # queue): creep forward until the RGB sees it again, then
+                # hold there for the rest of this yield; spinning would lose
+                # the line for good.
+                if not self.yield_at_line_end:
                     self.get_logger().warning(
-                        'ถอยผ่านแยกแล้ว RGB ยังไม่เห็นเส้น: '
-                        'หมุนหาเส้นอยู่กับที่โดยยังให้ทางอยู่')
-                    self.yield_line_missing_logged = True
-                error = angle_difference(self.yield_heading,
-                                         self._world_pose()[2])
-                if error >= 1.0:
-                    self.yield_scan_direction = 1
-                elif error <= -1.0:
-                    self.yield_scan_direction = -1
-                cmd.angular.z = self.yield_scan_direction * ANCHOR_TURN_SPEED
+                        'ถอยจนสุดเส้นแล้ว: หยุดรอตรงนี้โดยยังให้ทางอยู่')
+                    self.yield_at_line_end = True
+                if not (self.sensors.any_black() or self.sensors.any_yellow()):
+                    cmd.linear.x = ALIGN_SPEED
             else:
                 self.yield_rear_blocked = False
                 heading_error = angle_difference(
@@ -1398,7 +1403,8 @@ class MazeSolver(Node):
                 peer_name, peer_pose, peer_distance = peer
                 opposite = (abs(angle_difference(peer_pose['heading'],
                                                  self._world_pose()[2]))
-                            > HEAD_ON_HEADING_RAD)
+                            > HEAD_ON_HEADING_RAD
+                            and peer_pose.get('state') not in PIVOTING_STATES)
                 recovering = peer_pose.get('state') in (LINE_LOST, ALIGN_LINE,
                                                        REACQUIRE)
                 if ((opposite or recovering) and
