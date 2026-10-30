@@ -824,6 +824,8 @@ class MazeSolver(Node):
                   'ROUTE_TO_GOAL': 'ทางที่สั้นที่สุดไปเป้าหมายตามแผนที่',
                   'LIKELY_KNOWN_BRANCH': 'กิ่งที่น่าจะพาไปที่ที่ทีมรู้แล้ว',
                   'TOWARD_UNEXPLORED': 'ไปหาแยกที่ยังมีทางไม่ได้สำรวจที่ใกล้ที่สุด',
+                  'ASSIGNED_BRANCH': 'สำรวจกิ่งที่ทีมจองให้',
+                  'TOWARD_ASSIGNED': 'ไปหางานที่ทีมจองให้',
                   }.get(choice.get('reason'), 'ทีมเลือกทาง')
         self.get_logger().info(f'เลือก{label}ที่ J{choice["junction_id"]}: {reason}')
         self.pending_team_request = None
