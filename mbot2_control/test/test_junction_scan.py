@@ -1085,6 +1085,107 @@ class BlackJunctionScanTest(unittest.TestCase):
         self.robot.tick()  # answer already in: no fixed one-second pause
         self.assertEqual(maze_solver.TURNING, self.node.state)
 
+    # C2 stage 1: ask ahead at known junctions -------------------------------
+
+    def ahead_setup(self):
+        self.use_team()
+        self.team_node('JUNCTION', math.pi, 0.0, math.pi / 2)
+        self.robot = FloorHarness(self.node, [INBOUND, STRAIGHT, LEFT], self.clock)
+        self.node._change_state(maze_solver.FOLLOW)
+        self.states = []
+
+    def tick_ahead(self, ticks, answer=None, until=None):
+        for _ in range(ticks):
+            if until is not None and until():
+                return
+            pending = self.node.pending_team_request
+            if answer and pending is not None and self.node.team_choice is None:
+                name, heading, key = answer
+                self.node.team_choice = {
+                    'choice': name, 'junction_id': 7, 'direction': key,
+                    'request_id': pending['request_id'], 'junction_x': 0.5,
+                    'junction_y': 0.0, 'heading': heading}
+            self.robot.tick()
+            self.states.append(self.node.state)
+
+    def test_asks_ahead_for_known_junction(self):
+        self.ahead_setup()
+        self.tick_ahead(100, until=lambda: bool(self.branch_requests()))
+        self.assertEqual(1, len(self.branch_requests()))
+        self.assertEqual(maze_solver.FOLLOW, self.node.state)
+        self.assertLess(self.node._sensor_position()[0], 0.5)
+
+    def test_passes_straight_without_stopping(self):
+        self.ahead_setup()
+        self.tick_ahead(200, answer=('straight', 0.0, 0),
+                        until=lambda: self.node.pose[0] > 0.75)
+        for state in (maze_solver.CENTERING, maze_solver.JUNCTION_PAUSE,
+                      maze_solver.JUNCTION_SCAN, maze_solver.TURNING):
+            self.assertNotIn(state, self.states)
+        self.assertEqual(1, len(self.branch_requests()))
+        self.assertAlmostEqual(0.5, self.node.junctions[-1]['world_position'][0], delta=0.05)
+        self.assertIsNotNone(self.node.active_team_branch)
+
+    def test_turns_at_known_junction_without_scan_or_wait(self):
+        self.ahead_setup()
+        self.tick_ahead(400, answer=('left', math.pi / 2, 1),
+                        until=lambda: self.node.state == maze_solver.FOLLOW
+                        and self.node.pose[1] > 0.2)
+        self.assertIn(maze_solver.TURNING, self.states)
+        self.assertNotIn(maze_solver.JUNCTION_SCAN, self.states)
+        self.assertNotIn(maze_solver.JUNCTION_PAUSE, self.states)
+
+    def test_waits_when_answer_late_without_second_request(self):
+        self.ahead_setup()
+        self.tick_ahead(200, until=lambda: self.node.state == maze_solver.JUNCTION_PAUSE)
+        self.assertEqual(maze_solver.JUNCTION_PAUSE, self.node.state)
+        ids = {r['request_id'] for r in self.branch_requests()}
+        self.assertEqual(1, len(ids))
+
+    def test_turn_back_cancels_ahead_request(self):
+        self.ahead_setup()
+        self.tick_ahead(100, until=lambda: bool(self.branch_requests()))
+        rid = self.branch_requests()[-1]['request_id']
+        self.node._begin_turn_back('mbot0')
+        self.assertIn({'type': 'CANCEL_BRANCH', 'request_id': rid}, self.reports)
+        self.assertIsNone(self.node.ahead_request)
+
+    def test_stale_ahead_request_dropped(self):
+        self.ahead_setup()
+        self.tick_ahead(100, until=lambda: bool(self.branch_requests()))
+        rid = self.branch_requests()[-1]['request_id']
+        self.node._update_pose(1.0, 0.0, 0.0)  # e.g. relocated past the junction
+        self.robot.read_floor()
+        self.robot.tick()
+        self.assertIsNone(self.node.ahead_request)
+        self.assertIn({'type': 'CANCEL_BRANCH', 'request_id': rid}, self.reports)
+
+    def test_hit_short_of_asked_junction_cancels_ahead_request(self):
+        # A corner the map does not know sits 0.2 m before the junction asked about.
+        self.use_team()
+        self.team_node('JUNCTION', math.pi, 0.0, math.pi / 2)
+        self.robot = FloorHarness(self.node, [(-1.0, 0.0, 0.3, 0.0), (0.3, 0.0, 0.3, 0.5)],
+                                  self.clock)
+        self.node._change_state(maze_solver.FOLLOW)
+        self.states = []
+        self.tick_ahead(100, until=lambda: bool(self.branch_requests()))
+        rid = self.branch_requests()[-1]['request_id']
+        self.tick_ahead(100, until=lambda: self.node.state == maze_solver.CENTERING)
+        self.assertIn({'type': 'CANCEL_BRANCH', 'request_id': rid}, self.reports)
+        self.assertIsNone(self.node.ahead_request)
+
+    def test_turn_back_while_waiting_for_ahead_answer_releases_current_branch(self):
+        self.ahead_setup()
+        branch = {'junction_id': 3, 'direction': 0, 'choice': 'straight',
+                  'request_id': 'rA', 'previous_route_order': 2}
+        self.node.active_team_branch = dict(branch)
+        self.tick_ahead(200, until=lambda: self.node.state == maze_solver.CENTERING)
+        rid = self.node.pending_team_request['request_id']
+        self.node._begin_turn_back('mbot0')
+        self.assertIn({'type': 'RELEASE_BRANCH', **branch, 'peer': 'mbot0'}, self.reports)
+        self.assertNotIn({'type': 'CANCEL_BRANCH', 'request_id': 'rA'}, self.reports)
+        self.assertIn({'type': 'CANCEL_BRANCH', 'request_id': rid}, self.reports)
+
 
 if __name__ == '__main__':
     unittest.main()

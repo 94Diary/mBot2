@@ -108,6 +108,18 @@ class TeamMapTest(unittest.TestCase):
         self.assertEqual(j['id'], self.leads(c, WEST)['node'])
         self.assertEqual([], self.ledger.link_conflicts)
 
+    def test_cancelled_request_restores_trail(self):
+        j1, _ = self.junction('mbot1', 0.0, 0.0, 0.0, 0.0)
+        before = self.ledger.trails['mbot1']
+        self.tokens += 1
+        self.ledger.request_branch({
+            'robot': 'mbot1', 'request_id': 'ahead', 'x': 0.5, 'y': 0.0,
+            'approach_heading': 0.0,
+            'choices': [{'name': 'go', 'heading': 0.0}]}, 10.0)
+        self.assertNotEqual(before, self.ledger.trails['mbot1'])
+        self.ledger.cancel_branch({'robot': 'mbot1', 'request_id': 'ahead'})
+        self.assertEqual(before, self.ledger.trails['mbot1'])
+
     def square(self):
         """J1(0,0)-J2(1,0)-J3(1,1)-J4(0,1)-J1, plus a detour J2-J5-J6-J3."""
         ids = {}

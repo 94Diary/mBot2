@@ -81,6 +81,7 @@ SCAN_LIMIT_RAD = math.radians(130)
 SCAN_STRAIGHT_MAX_RAD = math.radians(40)  # |θ| ≤ 40° is the straight arm
 SCAN_SIDE_MIN_RAD = math.radians(50)      # 50°..130° is a side arm
 CENTER_TOLERANCE_M = 0.02
+LOOKAHEAD_M = 0.40             # ask the team this far before a known junction
 KNOWN_NODE_RADIUS_M = 0.10      # pivot is within ~2 cm of a real node
 TEAM_MAP_FRESH_SECONDS = 1.0    # state arrives every 0.5 s
 HEAD_ON_DECISION_SECONDS = 2.0  # wait this long for the team's hide order
@@ -160,6 +161,8 @@ class MazeSolver(Node):
         self.head_on_fallback_until = {}
         self.peer_wait = None  # {'peer', 'since'} while stopped behind a teammate
         self.goal_reported = False
+        self.ahead_request = None  # {'node', 'request_id'}: asked before arriving
+        self.await_ahead_choice = False
         self.park_start_distance = 0.0
         self.park_heading = 0.0
         self.team_encounter = None
@@ -411,7 +414,8 @@ class MazeSolver(Node):
         if self._peer_behind_close():
             return  # turning would swing into the teammate behind; wait
         if (self.state == CENTERING and not self.junction_needs_request
-                and not self.scan_pending and self.active_team_branch is not None):
+                and not self.scan_pending and not self.await_ahead_choice
+                and self.active_team_branch is not None):
             # The branch was chosen at this junction but not entered yet.
             self._team_report({'type': 'CANCEL_BRANCH',
                                'request_id': self.active_team_branch['request_id']})
@@ -427,6 +431,8 @@ class MazeSolver(Node):
                                'request_id': self.pending_team_request['request_id']})
             self.pending_team_request = None
             self.team_choice = None
+        self.ahead_request = None
+        self.await_ahead_choice = False
         self.junction_needs_request = False
         self.scan_pending = False
         self.center_on_axle = False
@@ -657,7 +663,7 @@ class MazeSolver(Node):
         if world is None:
             return
         if (self.state == CENTERING and not self.junction_needs_request
-                and not self.scan_pending
+                and not self.scan_pending and not self.await_ahead_choice
                 and self.active_team_branch is not None):
             self._team_report({
                 'type': 'CANCEL_BRANCH',
@@ -676,6 +682,8 @@ class MazeSolver(Node):
             self.team_choice = None
         # Not yet asked: the junction is seen again after the yield.
         self.junction_needs_request = False
+        self.ahead_request = None
+        self.await_ahead_choice = False
         rescan = self.scan_pending
         self.scan_pending = False
         self.center_on_axle = False
@@ -996,6 +1004,7 @@ class MazeSolver(Node):
             YIELD_LINE_TURN_GAIN * line_error))
 
     def _begin_line_recovery(self, after_state, anchor=None):
+        self._drop_ahead_request()
         self.line_search_after = after_state
         anchor = anchor or self.last_centered_pose or self.pose
         previous = self.line_lost_anchor
@@ -1179,10 +1188,101 @@ class MazeSolver(Node):
                            'x': position[0], 'y': position[1],
                            'approach_heading': approach_heading, **extra})
 
+    def _ask_ahead(self):
+        """Ask about a mapped junction before reaching it, once per junction."""
+        if self.ahead_request is not None:
+            node = self.ahead_request['node']
+            sx, sy = self._world_sensor_position()
+            yaw = self._world_pose()[2]
+            dx, dy = node['x'] - sx, node['y'] - sy
+            along = dx * math.cos(yaw) + dy * math.sin(yaw)
+            lateral = abs(-dx * math.sin(yaw) + dy * math.cos(yaw))
+            if along < -0.20 or lateral > 0.10:
+                self._drop_ahead_request()  # behind us, or no longer on our line
+            return
+        if (self.pending_team_request is not None or self.returning or
+                time.monotonic() - self.last_team_state_at > TEAM_MAP_FRESH_SECONDS):
+            return
+        sx, sy = self._world_sensor_position()
+        yaw = self._world_pose()[2]
+        for node in self.team_nodes:
+            if node.get('kind') != 'JUNCTION':
+                continue
+            dx, dy = node['x'] - sx, node['y'] - sy
+            along = dx * math.cos(yaw) + dy * math.sin(yaw)
+            lateral = abs(-dx * math.sin(yaw) + dy * math.cos(yaw))
+            if 0.05 <= along <= LOOKAHEAD_M and lateral <= 0.05:
+                self.scan_hits = {'straight': [], 'left': [], 'right': []}
+                for key, branch in node['branches'].items():
+                    heading = branch.get('heading', int(key) * math.pi / 2)
+                    self._bin_scan_angle(angle_difference(heading, yaw))
+                exits = {name: yaw + sum(a) / len(a)
+                         for name, a in self.scan_hits.items() if a}
+                self._request_team_branch(
+                    False, 'left' in exits, 'right' in exits, (node['x'], node['y']),
+                    straight_open='straight' in exits, approach_heading=yaw,
+                    exit_headings=exits)
+                self.ahead_request = {'node': node, 'exits': exits,
+                                      'request_id': self.pending_team_request['request_id']}
+                return
+
+    def _drop_ahead_request(self):
+        if self.ahead_request is None:
+            return
+        if (self.pending_team_request is not None and self.pending_team_request[
+                'request_id'] == self.ahead_request['request_id']):
+            self._team_report({'type': 'CANCEL_BRANCH',
+                               'request_id': self.pending_team_request['request_id']})
+            self.pending_team_request = None
+            self.team_choice = None
+        self.ahead_request = None
+        self.await_ahead_choice = False
+
+    def _arrive_with_ahead_request(self):
+        """At the junction asked about: pass straight, or centre to turn/wait."""
+        ahead = self.ahead_request
+        if ahead is None:
+            return False
+        node = ahead['node']
+        hx, hy = self.outer_hit_world
+        if math.hypot(node['x'] - hx, node['y'] - hy) > 0.15:
+            # Something else came first (e.g. an unmapped corner): withdraw.
+            self._drop_ahead_request()
+            return False
+        exits = ahead['exits']
+        world = self._world_pose()
+        local = self._remember_junction(
+            self._sensor_position(), (node['x'], node['y']), self.pose[2], world[2],
+            'left' in exits, 'right' in exits)
+        local['straight_open'] = 'straight' in exits
+        local['exit_headings'] = exits
+        self.active_junction_world = (node['x'], node['y'])
+        self.junction_entry_pose = self.last_centered_pose or self.pose
+        self.ahead_request = None
+        self.trigger_resume_distance = self.distance_total + JUNCTION_ESCAPE_DISTANCE_M
+        center = self.outer_hit_position
+        if self.team_choice is not None and self._apply_team_choice():
+            if abs(self.branch_angle) < 0.35:
+                self.get_logger().info(f"ผ่าน J{node['id']} ตรงไปโดยไม่หยุด")
+                self.outer_hit_position = None
+                return True
+            self.await_ahead_choice = False
+        else:
+            self.await_ahead_choice = True
+        # Turn (or wait for the answer) with the wheels on the junction.
+        self.center_target = center
+        self.center_heading = self.pose[2]
+        self.scan_pending = False
+        self.center_on_axle = True
+        self._change_state(CENTERING)
+        self.cmd_pub.publish(Twist())
+        return True
+
     def _begin_line_end_check(self):
         # Black maze: the line vanished, so pivot where it was last centred.
         # Both sides are swept: nothing found is a dead end (BLOCKED, U-turn),
         # a single exit is a drift or a bend the outer sensors missed.
+        self._drop_ahead_request()
         x, y, yaw = self.last_centered_pose
         self.center_target = (x + RGB_FRONT_OFFSET_M * math.cos(yaw),
                               y + RGB_FRONT_OFFSET_M * math.sin(yaw))
@@ -1657,6 +1757,12 @@ class MazeSolver(Node):
                 if abs(remaining) <= CENTER_TOLERANCE_M:
                     if self.scan_pending:
                         self._start_junction_scan()
+                    elif self.await_ahead_choice:
+                        # Asked ahead but no answer yet: wait for that answer.
+                        self.center_on_axle = False
+                        self.await_ahead_choice = False
+                        self.returning = False
+                        self._change_state(JUNCTION_PAUSE)
                     else:
                         self.center_on_axle = False
                         self._leave_junction_center()
@@ -1962,6 +2068,8 @@ class MazeSolver(Node):
                     <= RETURN_MARKER_RADIUS_M):
                 # The saved junction itself: RETURNING handles it from memory.
                 self.outer_hit_position = None
+            elif self.state == FOLLOW and self._arrive_with_ahead_request():
+                pass  # passed straight through: keep following this tick
             else:
                 self._begin_black_junction()
                 self.cmd_pub.publish(Twist())
@@ -2030,6 +2138,9 @@ class MazeSolver(Node):
                     cmd.linear.x = speed
                 else:
                     self._follow_line(cmd, speed)
+
+        if self.state == FOLLOW and self.black_mode and self.team_enabled:
+            self._ask_ahead()
 
         if self.state == FOLLOW:
             distance = self._distance_to_junction()

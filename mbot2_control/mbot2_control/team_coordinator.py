@@ -50,6 +50,8 @@ class TeamLedger:
         self.avoid = {}
         # Junction with a new branch each idle robot is being steered to.
         self.frontier_claims = {}
+        # Trail before each granted request, restored if it is cancelled.
+        self.request_trails = {}
 
     def update_pose(self, report, now):
         robot = report['robot']
@@ -300,6 +302,7 @@ class TeamLedger:
                 branch['status'] = 'CLAIMED'
             if robot not in branch['visited_by']:
                 branch['visited_by'].append(robot)
+            self.request_trails[token] = self.trails.get(robot)
             self.trails[robot] = (node['id'], key)
             route_order = self.next_route_order
             self.next_route_order += 1
@@ -639,8 +642,15 @@ class TeamLedger:
         """Release a junction choice when its robot has to yield before moving."""
         token = (report['robot'], report['request_id'])
         decision = self.decisions.pop(token, None)
+        previous_trail = self.request_trails.pop(token, None)
         if decision is None or decision.get('direction') is None:
             return
+        if self.trails.get(report['robot']) == (decision['junction_id'], decision['direction']):
+            # Asked ahead but never got there: the robot is still on its old leg.
+            if previous_trail is None:
+                self.trails.pop(report['robot'], None)
+            else:
+                self.trails[report['robot']] = previous_trail
         node = self.junctions.get(decision['junction_id'])
         if node is None:
             return
