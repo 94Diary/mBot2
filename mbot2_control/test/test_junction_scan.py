@@ -817,6 +817,151 @@ class BlackJunctionScanTest(unittest.TestCase):
             self.node.pose[2], math.pi), delta=0.3)
         self.assertFalse(any(c.linear.x < -0.01 for c in self.robot.sent))
 
+    # Start gate (ก): wait in the start box until the robot in front has
+    # reached its first junction.
+    def start_setup(self, leader=None):
+        self.use_team()
+        self.robot = FloorHarness(self.node, [], self.clock)
+        self.node._change_state(maze_solver.SEARCH)
+        self.node.team_peers = {} if leader is None else {'mbot0': leader}
+
+    def leader(self, reached):
+        return {'x': 0.25, 'y': 0.0, 'heading': 0.0, 'state': maze_solver.FOLLOW,
+                'route_order': 0, 'junction_reached': reached}
+
+    def test_start_waits_until_leader_reaches_junction(self):
+        self.start_setup(self.leader(False))
+        for _ in range(20):
+            self.robot.tick()
+        self.assertEqual(0.0, self.robot.sent[-1].linear.x)
+        self.assertEqual(0.0, self.node.pose[0])
+        self.node.team_peers = {'mbot0': {**self.leader(True), 'x': 1.5}}
+        self.robot.tick()
+        self.assertGreater(self.robot.sent[-1].linear.x, 0.0)
+
+    def test_start_goes_with_no_robot_in_front(self):
+        self.start_setup()
+        self.robot.tick()
+        self.assertGreater(self.robot.sent[-1].linear.x, 0.0)
+
+    def test_start_goes_when_leader_drops_out(self):
+        self.start_setup(self.leader(False))
+        self.robot.tick()
+        self.node.team_peers = {}
+        self.robot.tick()
+        self.assertGreater(self.robot.sent[-1].linear.x, 0.0)
+
+    def test_start_gate_does_not_hold_a_solo_robot(self):
+        self.robot = FloorHarness(self.node, [], self.clock)
+        self.node._change_state(maze_solver.SEARCH)
+        self.node.team_peers = {'mbot0': self.leader(False)}
+        self.robot.tick()
+        self.assertGreater(self.robot.sent[-1].linear.x, 0.0)
+
+    # Clearance (ข): do not drive into a teammate just ahead, e.g. one still
+    # turning off a junction where the ultrasonic beam cannot see it.
+    def clearance_setup(self, peer_x, peer_y, heading, state=maze_solver.FOLLOW, order=0):
+        self.turn_back_setup()
+        self.node.team_route_order = 5
+        self.node.team_peers = {'mbot0': {
+            'x': peer_x, 'y': peer_y, 'heading': heading, 'state': state,
+            'route_order': order}}
+
+    def test_waits_for_peer_turning_off_ahead(self):
+        x = self.node.pose[0]
+        self.clearance_setup(x + 0.17, 0.09, math.pi / 2)
+        for _ in range(10):
+            self.robot.tick()
+        self.assertEqual(0.0, self.robot.sent[-1].linear.x)
+        self.assertEqual(maze_solver.FOLLOW, self.node.state)
+
+    def test_goes_once_peer_has_cleared(self):
+        x = self.node.pose[0]
+        self.clearance_setup(x + 0.17, 0.30, math.pi / 2)
+        self.robot.tick()
+        self.assertGreater(self.robot.sent[-1].linear.x, 0.0)
+
+    def test_parked_peer_ahead_does_not_stop_clearance(self):
+        x = self.node.pose[0]
+        self.clearance_setup(x + 0.30, 0.0, 0.0, state=maze_solver.GOAL_REACHED)
+        self.robot.tick()
+        self.assertGreater(self.robot.sent[-1].linear.x, 0.0)
+
+    def test_crossing_robots_only_the_later_one_waits(self):
+        # Each sees the other ahead; mbot0 (order 0) entered first and goes.
+        x = self.node.pose[0]
+        self.clearance_setup(x + 0.20, -0.20, math.pi / 2, order=0)
+        self.robot.tick()
+        self.assertEqual(0.0, self.robot.sent[-1].linear.x)
+        self.node.team_route_order = 0
+        self.node.team_peers['mbot0']['route_order'] = 5
+        self.robot.tick()
+        self.assertGreater(self.robot.sent[-1].linear.x, 0.0)
+
+    def test_waits_for_pivoting_peer_even_with_priority(self):
+        # mbot0 got its branch last (order 9) but is still turning toward us.
+        x = self.node.pose[0]
+        self.clearance_setup(x + 0.25, 0.0, math.pi, state=maze_solver.TURNING, order=9)
+        self.robot.tick()
+        self.assertEqual(0.0, self.robot.sent[-1].linear.x)
+
+    def test_centering_robots_meeting_at_a_junction_do_not_both_wait(self):
+        # Seen in sim: two robots centring on one junction from two arms each
+        # treated the other as pivoting and both waited for good.
+        x = self.node.pose[0]
+        self.clearance_setup(x + 0.19, -0.08, math.pi / 2,
+                             state=maze_solver.CENTERING, order=9)
+        self.node.team_route_order = 0  # we entered first: we go
+        self.robot.tick()
+        self.assertGreater(self.robot.sent[-1].linear.x, 0.0)
+
+    def test_busy_peer_does_not_run_down_the_turn_back_timer(self):
+        x = self.node.pose[0]
+        self.clearance_setup(x + 0.25, 0.0, 0.0, state=maze_solver.JUNCTION_PAUSE)
+        for _ in range(int(maze_solver.PEER_WAIT_TURN_BACK_SECONDS * 10) + 20):
+            self.robot.tick()
+        self.assertEqual(maze_solver.FOLLOW, self.node.state)
+
+    def test_stuck_peer_ahead_clearance_turns_back(self):
+        x = self.node.pose[0]
+        self.clearance_setup(x + 0.25, 0.0, 0.0, state=maze_solver.LINE_LOST)
+        for _ in range(int(maze_solver.PEER_WAIT_TURN_BACK_SECONDS * 10) + 20):
+            self.robot.tick()
+        self.assertNotEqual(maze_solver.FOLLOW, self.node.state)
+
+    def test_returning_robot_waits_instead_of_turning_back(self):
+        x = self.node.pose[0]
+        self.clearance_setup(x + 0.25, 0.0, 0.0, state=maze_solver.LINE_LOST)
+        self.node.returning = True
+        self.node._change_state(maze_solver.RETURNING)
+        for _ in range(int(maze_solver.PEER_WAIT_TURN_BACK_SECONDS * 10) + 20):
+            self.robot.tick()
+        self.assertEqual(maze_solver.RETURNING, self.node.state)
+        self.assertNotIn('RELEASE_BRANCH', [r.get('type') for r in self.reports])
+
+    def test_start_waits_for_far_leader_that_missed_a_junction(self):
+        # mbot0 drove past the first junction without stopping: still wait.
+        self.start_setup(self.leader(False))
+        self.robot.tick()
+        self.node.team_peers = {'mbot0': {**self.leader(False), 'x': 1.3}}
+        self.robot.tick()
+        self.assertEqual(0.0, self.robot.sent[-1].linear.x)
+
+    def test_start_goes_after_gate_timeout(self):
+        self.start_setup(self.leader(False))
+        self.robot.tick()
+        self.node.team_peers = {'mbot0': {**self.leader(False), 'x': 0.6}}  # stalled
+        self.clock[0] += maze_solver.START_GATE_TIMEOUT_SECONDS + 1.0
+        self.robot.read_floor()
+        self.robot.tick()
+        self.assertGreater(self.robot.sent[-1].linear.x, 0.0)
+
+    def test_start_goes_when_leader_is_at_goal(self):
+        self.start_setup({**self.leader(False), 'x': 0.6,
+                          'state': maze_solver.GOAL_REACHED})
+        self.robot.tick()
+        self.assertGreater(self.robot.sent[-1].linear.x, 0.0)
+
     def test_earlier_robot_waits(self):
         self.turn_back_setup(gap=0.3)
         self.node.team_route_order = 1  # entered first: mbot0 has order 0? no

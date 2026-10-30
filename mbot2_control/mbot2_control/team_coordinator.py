@@ -19,6 +19,8 @@ from std_msgs.msg import String
 
 MATCH_RADIUS_M = 1.00
 PEER_TIMEOUT_SECONDS = 4.0
+JUNCTION_REACHED_M = 0.20  # robot this close to its junction has arrived
+JUNCTION_PASSED_M = 0.40   # ...or this far out along the branch it took
 REASSIGN_MARGIN_M = 0.5  # move a reserved branch only to a robot this much closer
 DIRECTION_SECTORS = 4  # the current line maze has orthogonal branches
 
@@ -55,6 +57,8 @@ class TeamLedger:
         self.request_trails = {}
         # C2: unexplored branch the team reserved for each idle robot.
         self.assignments = {}
+        # Robots that have stood at a junction: the next one may leave START.
+        self.junction_reached = set()
 
     def update_pose(self, report, now):
         robot = report['robot']
@@ -79,6 +83,20 @@ class TeamLedger:
             'route_order': route_order,
             'seen_at': now,
         }
+        trail = self.trails.get(robot)
+        node = self.junctions.get(trail[0]) if trail else None
+        if node is not None and node['kind'] == 'JUNCTION':
+            dx = self.robots[robot]['x'] - node['x']
+            dy = self.robots[robot]['y'] - node['y']
+            heading = node['branches'].get(trail[1], {}).get('heading')
+            along = (dx * math.cos(heading) + dy * math.sin(heading)
+                     if heading is not None else -1.0)
+            lateral = (abs(-dx * math.sin(heading) + dy * math.cos(heading))
+                       if heading is not None else math.inf)
+            # A robot passing straight through may never report from the centre.
+            if (math.hypot(dx, dy) <= JUNCTION_REACHED_M
+                    or (0.0 < along <= JUNCTION_PASSED_M and lateral <= 0.10)):
+                self.junction_reached.add(robot)
         self._update_assignments(now)
 
     def _is_task(self, node, key, robot, now):
@@ -811,7 +829,8 @@ class TeamLedger:
                        'yield_to': p['yield_to'],
                        'yield_junction': p['yield_junction'],
                        'yield_escape_heading': p['yield_escape_heading'],
-                       'blocked_behind': p.get('blocked_behind', False)}
+                       'blocked_behind': p.get('blocked_behind', False),
+                       'junction_reached': name in self.junction_reached}
                 for name, p in self.robots.items()
                 if now - p['seen_at'] < PEER_TIMEOUT_SECONDS
             },

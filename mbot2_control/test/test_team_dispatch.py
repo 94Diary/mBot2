@@ -144,6 +144,19 @@ class TeamDispatchTest(unittest.TestCase):
         self.ledger._update_assignments(10.0)
         self.assertEqual((self.a['id'], EAST), self.task_of('mbot2'))
 
+    def test_junction_reached_only_near_a_junction(self):
+        self.place('mbot1', 0.5, 0.0, (self.j, EAST))
+        self.assertFalse(self.ledger.snapshot(10.0)['robots']['mbot1']['junction_reached'])
+        self.place('mbot1', 0.05, 0.0, (self.j, EAST))
+        self.place('mbot1', 0.5, 0.0, (self.j, EAST))  # stays latched
+        self.assertTrue(self.ledger.snapshot(10.0)['robots']['mbot1']['junction_reached'])
+
+    def test_junction_reached_when_passing_straight_through(self):
+        # POSE samples 0.3 m apart: one just before, one just past J.
+        self.place('mbot1', -0.25, 0.0, (self.j, EAST))
+        self.place('mbot1', 0.30, 0.0, (self.j, EAST))
+        self.assertTrue(self.ledger.snapshot(10.0)['robots']['mbot1']['junction_reached'])
+
 
 if __name__ == '__main__':
     unittest.main()

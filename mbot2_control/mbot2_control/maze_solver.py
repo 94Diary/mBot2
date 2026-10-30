@@ -86,6 +86,11 @@ KNOWN_NODE_RADIUS_M = 0.10      # pivot is within ~2 cm of a real node
 TEAM_MAP_FRESH_SECONDS = 1.0    # state arrives every 0.5 s
 HEAD_ON_DECISION_SECONDS = 2.0  # wait this long for the team's hide order
 HEAD_ON_FALLBACK_SECONDS = 5.0  # then use the old rule for this peer
+START_LEADER_AHEAD_M = 1.0     # robot in front in the start box
+START_LEADER_SIDE_M = 0.15
+START_GATE_TIMEOUT_SECONDS = 60.0  # wall clock: the sim runs at ~1/3 speed
+CLEAR_AHEAD_M = 0.40            # stop for a teammate this close in front
+CLEAR_SIDE_M = 0.25
 PEER_WAIT_TURN_BACK_SECONDS = 15.0  # stuck behind a teammate: go elsewhere
 HOLD_TIMEOUT_SECONDS = 60.0     # wall clock: the sim runs at ~1/3 speed
 HIDE_DEPTH_M = 0.25             # wheels this far into the hiding branch
@@ -160,6 +165,10 @@ class MazeSolver(Node):
         self.head_on_wait = None  # {'peer', 'since'} while the team decides
         self.head_on_fallback_until = {}
         self.peer_wait = None  # {'peer', 'since'} while stopped behind a teammate
+        self.start_leader = None  # robot in front in the start box
+        self.start_gate_open = False
+        self.start_gate_since = 0.0
+        self.clearance_peer = None  # {'peer', 'since'} while stopped for a teammate
         self.goal_reported = False
         self.ahead_request = None  # {'node', 'request_id'}: asked before arriving
         self.await_ahead_choice = False
@@ -552,6 +561,63 @@ class MazeSolver(Node):
                 if closest is None or forward < closest[2]:
                     closest = (name, peer, forward)
         return closest
+
+    @staticmethod
+    def _in_front(pose, x, y, ahead, side):
+        dx, dy = x - pose[0], y - pose[1]
+        forward = dx * math.cos(pose[2]) + dy * math.sin(pose[2])
+        lateral = abs(-dx * math.sin(pose[2]) + dy * math.cos(pose[2]))
+        return 0.0 < forward < ahead and lateral < side
+
+    def _start_gate_closed(self):
+        """Leave the start box only once the robot in front reached a junction."""
+        if not self.team_enabled or self.start_gate_open:
+            return False
+        pose = self._world_pose()
+        if pose is None:
+            return True
+        if self.start_leader is None:
+            ahead = [(math.hypot(p['x'] - pose[0], p['y'] - pose[1]), name)
+                     for name, p in self.team_peers.items()
+                     if self._in_front(pose, p['x'], p['y'],
+                                       START_LEADER_AHEAD_M, START_LEADER_SIDE_M)]
+            if not ahead:
+                self.start_gate_open = True
+                return False
+            self.start_leader = min(ahead)[1]
+            self.start_gate_since = time.monotonic()
+            self.get_logger().info(
+                f'รอ {self.start_leader} ถึงแยกก่อน แล้วค่อยออกจากจุดเริ่ม')
+        leader = self.team_peers.get(self.start_leader)
+        if (leader is None or leader.get('junction_reached')
+                or leader.get('state') in (GOAL_PARKING, GOAL_REACHED)
+                or time.monotonic() - self.start_gate_since > START_GATE_TIMEOUT_SECONDS):
+            self.start_gate_open = True
+            self.get_logger().info(f'{self.start_leader} ถึงแยกแล้ว: ออกจากจุดเริ่ม')
+            return False
+        return True
+
+    def _clearance_peer(self):
+        """Name a teammate just in front that we must not drive into."""
+        pose = self._world_pose()
+        if pose is None:
+            return None
+        for name, peer in self.team_peers.items():
+            if peer.get('state') in (GOAL_PARKING, GOAL_REACHED):
+                continue  # the parking queue handles itself
+            if not self._in_front(pose, peer['x'], peer['y'], CLEAR_AHEAD_M, CLEAR_SIDE_M):
+                continue
+            peer_pose = (peer['x'], peer['y'], peer.get('heading', 0.0))
+            mutual = self._in_front(peer_pose, pose[0], pose[1],
+                                    CLEAR_AHEAD_M, CLEAR_SIDE_M)
+            # When both see each other only the later robot waits; a robot
+            # turning on the spot cannot give way, so always wait for it.
+            # CENTERING still drives, and we may be centring too: no exception.
+            if (mutual and peer.get('state') not in (JUNCTION_SCAN, JUNCTION_PAUSE, TURNING)
+                    and not self._peer_has_priority(name, peer)):
+                continue
+            return name
+        return None
 
     def _peer_has_priority(self, name, peer):
         """The robot that entered the current route earlier has right of way."""
@@ -1602,6 +1668,29 @@ class MazeSolver(Node):
                 self._begin_turn_back(head_on[0])
                 self.cmd_pub.publish(cmd)
                 return
+
+        if self.state == SEARCH and self._start_gate_closed():
+            self.cmd_pub.publish(cmd)
+            return
+
+        if (self.team_enabled and self.state in
+                (SEARCH, FOLLOW, APPROACH_JUNCTION, CENTERING, RETURNING, YIELD_RESUME)):
+            blocker = self._clearance_peer()
+            if blocker is not None:
+                if self.clearance_peer is None or self.clearance_peer['peer'] != blocker:
+                    self.get_logger().info(f'รอ {blocker} ที่อยู่ข้างหน้าออกไปก่อน')
+                    self.clearance_peer = {'peer': blocker, 'since': now}
+                elif self.team_peers[blocker].get('state') in PIVOTING_STATES:
+                    self.clearance_peer['since'] = now  # busy at a junction, not stuck
+                elif (self.state != SEARCH and not self.head_on_hiding
+                      and not self.returning
+                      and now - self.clearance_peer['since'] > PEER_WAIT_TURN_BACK_SECONDS):
+                    # It is not moving on: leave this corridor to it.
+                    self.clearance_peer = None
+                    self._begin_turn_back(blocker)
+                self.cmd_pub.publish(cmd)
+                return
+            self.clearance_peer = None
 
         if self.state == YIELD_TURN:
             error = angle_difference(self.turn_target, self.pose[2])
