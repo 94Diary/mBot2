@@ -141,6 +141,57 @@ class TeamFrontierTest(unittest.TestCase):
         self.assertEqual(EAST, result['direction'])
         self.assertEqual('TOWARD_GOAL', result['reason'])
 
+    # Task C3: goal routes ------------------------------------------------
+
+    def goal_map(self):
+        # P(0,0): north -> goal G(0,1); east arm is where mbot1 explores.
+        p, g = self.node(0, 0), self.node(0, 1, 'GOAL')
+        self.join(p, NORTH, g, SOUTH)
+        self.ledger.goal = {'robot': 'mbot2', 'x': 0.0, 'y': 1.0}
+        self.ledger.update_pose({'robot': 'mbot1', 'x': 0.3, 'y': 0.0}, 10.0)
+        self.ledger.trails['mbot1'] = (p['id'], EAST)
+        return p, g
+
+    def route_for(self, robot, orders):
+        return next(o for o in orders if o['robot'] == robot)
+
+    def test_goal_route_turn_back_when_branch_unknown(self):
+        self.goal_map()
+        orders = self.ledger.goal_routes(10.0)
+        self.assertTrue(self.route_for('mbot1', orders)['turn_back'])
+        self.assertEqual('GOAL_ROUTE', orders[0]['type'])
+
+    def test_goal_route_keeps_going_when_ahead_is_shorter(self):
+        p, g = self.goal_map()
+        n, g2 = self.node(0.5, 0), self.node(0.5, 0.3)
+        self.join(p, EAST, n, WEST)
+        self.join(n, NORTH, g2, SOUTH)
+        self.join(g2, NORTH, g, EAST)
+        # Robot near N: ahead 0.05 + 0.3 + 0.86 m beats back 0.45 + 1.0 m.
+        self.ledger.update_pose({'robot': 'mbot1', 'x': 0.45, 'y': 0.0}, 10.0)
+        orders = self.ledger.goal_routes(10.0)
+        self.assertFalse(self.route_for('mbot1', orders)['turn_back'])
+
+    def test_goal_routes_skip_finder_and_returning(self):
+        self.goal_map()
+        self.ledger.update_pose({'robot': 'mbot3', 'x': 0.3, 'y': 0.0,
+                                 'returning': True}, 10.0)
+        self.ledger.trails['mbot3'] = self.ledger.trails['mbot1']
+        orders = self.ledger.goal_routes(10.0)
+        self.assertNotIn('mbot2', [o['robot'] for o in orders])
+        self.assertFalse(self.route_for('mbot3', orders)['turn_back'])
+
+    def test_goal_next_to_a_junction_gets_its_own_node(self):
+        # First red seen 7 cm past a junction: still a separate GOAL node.
+        j = self.node(-1.25, 0.75)
+        self.ask('mbot1', j, -math.pi / 2, [SOUTH])
+        self.ledger.set_goal({'robot': 'mbot1', 'x': -1.25, 'y': 0.68,
+                              'approach_heading': -math.pi / 2})
+        goals = [n for n in self.ledger.junctions.values() if n['kind'] == 'GOAL']
+        self.assertEqual(1, len(goals))
+        self.assertEqual('JUNCTION', j['kind'])
+        self.assertEqual(goals[0]['id'], j['branches'][SOUTH]['leads_to']['node'])
+
 
 if __name__ == '__main__':
     unittest.main()

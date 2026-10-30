@@ -74,15 +74,16 @@ class TeamLedger:
         }
 
     def _junction(self, x, y, kind='JUNCTION'):
-        if kind == 'START':
-            # Robots leave the start box at different points: one START.
-            start = next((n for n in self.junctions.values()
-                          if n['kind'] == 'START'), None)
-            if start is not None:
-                return start
+        if kind in ('START', 'GOAL'):
+            # One of each, never merged with a junction next to it: robots
+            # leave the start box and first see the goal area at different
+            # points, sometimes only centimetres from a junction.
+            same = next((n for n in self.junctions.values() if n['kind'] == kind), None)
+            if same is not None:
+                return same
         else:
             for node in self.junctions.values():
-                if (node['kind'] != 'START' and
+                if (node['kind'] not in ('START', 'GOAL') and
                         math.hypot(node['x'] - x, node['y'] - y) <= self.match_radius):
                     if kind == 'JUNCTION':
                         node['kind'] = 'JUNCTION'  # a corner with a third arm
@@ -505,6 +506,32 @@ class TeamLedger:
                            'encounter': encounter['id']})
         return orders
 
+    def goal_routes(self, now):
+        """Tell each robot whether to turn back now that the goal is known."""
+        goal = next((n for n in self.junctions.values() if n['kind'] == 'GOAL'), None)
+        orders = []
+        for robot, pose in self.robots.items():
+            if (self.goal is None or robot == self.goal['robot']
+                    or not self._live(robot, now) or pose['state'] == 'GOAL_REACHED'):
+                continue
+            turn_back = False
+            trail = self.trails.get(robot)
+            if goal is not None and not pose['returning'] and trail is not None:
+                reach = self._graph_distances([goal['id']], robot, now)
+                behind = self.junctions.get(trail[0])
+                link = behind['branches'].get(trail[1], {}).get('leads_to') if behind else None
+                ahead = self.junctions.get(link['node']) if link else None
+
+                def via(node):
+                    if node is None or node['id'] not in reach:
+                        return math.inf
+                    return (math.hypot(pose['x'] - node['x'], pose['y'] - node['y'])
+                            + reach[node['id']])
+                # Unknown corridor ahead: go back whenever the way behind is known.
+                turn_back = via(behind) < via(ahead)
+            orders.append({'type': 'GOAL_ROUTE', 'robot': robot, 'turn_back': turn_back})
+        return orders
+
     def release_branch(self, report, now):
         """Give a corridor up to the teammate met head-on inside it."""
         robot = report['robot']
@@ -731,7 +758,11 @@ class TeamCoordinator(Node):
                     self.get_logger().warning(f'map link ignored: {line}')
                 self._publish_state()
             elif kind == 'GOAL':
+                first = self.ledger.goal is None
                 self.ledger.set_goal(report)
+                if first:
+                    for order in self.ledger.goal_routes(now):
+                        self._publish(self.decision_pub, order)
                 self._publish_state()
                 self.get_logger().info(f"Goal reported by {report['robot']}")
         except (KeyError, ValueError, TypeError, json.JSONDecodeError) as exc:

@@ -15,6 +15,7 @@ from mbot2_control.maze_solver import MazeSolver
 from mbot2_control.modules.sensors.quad_rgb_sensor import QuadRGBArray
 
 BLACK = (10, 10, 10)
+RED = (200, 20, 20)
 WHITE = (240, 240, 240)
 YELLOW = (100, 87, 0)
 
@@ -95,9 +96,10 @@ class FloorHarness:
     SUBSTEPS = 5
     team_state_age = 0.0  # seconds since the last /maze_team/state
 
-    def __init__(self, node, segments, clock=None):
+    def __init__(self, node, segments, clock=None, red_boxes=()):
         self.node = node
         self.clock = clock
+        self.red_boxes = red_boxes  # (xmin, xmax, ymin, ymax) under the line
         self.segments = segments
         self.sent = []
         node.cmd_pub.publish = self.sent.append
@@ -112,7 +114,8 @@ class FloorHarness:
             sx = x + 0.085 * math.cos(yaw) - offset * math.sin(yaw)
             sy = y + 0.085 * math.sin(yaw) + offset * math.cos(yaw)
             black = any(on_segment(sx, sy, s) for s in self.segments)
-            callback(image(BLACK if black else WHITE))
+            red = any(a <= sx <= b and c <= sy <= d for a, b, c, d in self.red_boxes)
+            callback(image(BLACK if black else RED if red else WHITE))
 
     def tick(self, dt=0.1):
         now = time.monotonic()
@@ -943,6 +946,130 @@ class BlackJunctionScanTest(unittest.TestCase):
         self.node.ultrasonic.distance_m = 0.2
         self.tick_turn_back(5)
         self.assertNotEqual(maze_solver.TURNING, self.node.state)
+
+    # Goal area: red box x 0.05..0.95, line runs through it and ends at 0.8.
+    GOAL_BOX = (0.05, 0.95, -0.15, 0.15)
+
+    def goal_setup(self):
+        self.use_team()
+        self.node.sensors.goal_color = 'red'
+        self.robot = FloorHarness(self.node, [(-1.0, 0.0, 0.8, 0.0)], self.clock,
+                                  red_boxes=[self.GOAL_BOX])
+        self.node._change_state(maze_solver.FOLLOW)
+
+    def goals(self):
+        return [r for r in self.reports if r.get('type') == 'GOAL']
+
+    def test_parks_at_line_end_inside_area(self):
+        self.goal_setup()
+        self.run_until(lambda: self.node.state == maze_solver.GOAL_REACHED)
+        self.assertEqual(1, len(self.goals()))
+        self.assertTrue(self.node.sensors.any_green())
+        self.assertGreater(self.node.pose[0], 0.55)
+
+    def test_parks_behind_teammate(self):
+        self.goal_setup()
+        rear = 0.55  # back of a teammate parked further in
+        for _ in range(300):
+            if self.node.state == maze_solver.GOAL_REACHED:
+                break
+            self.node.team_peers = {'mbot0': {
+                'x': rear + 0.1, 'y': 0.0, 'heading': 0.0,
+                'state': maze_solver.GOAL_REACHED, 'route_order': 0}}
+            gap = rear - (self.node.pose[0] + 0.1)
+            self.node.ultrasonic.distance_m = gap if gap < 0.4 else None
+            self.robot.tick()
+        self.assertEqual(maze_solver.GOAL_REACHED, self.node.state)
+        self.assertLess(self.node.pose[0] + 0.1, rear)  # never touched it
+
+    def test_parking_ignores_peer_ahead_head_on(self):
+        self.goal_setup()
+        self.run_until(lambda: self.node.state == maze_solver.GOAL_PARKING)
+        for _ in range(10):
+            self.peer(self.node.pose[0] + 0.5, math.pi, maze_solver.RETURNING)
+            self.robot.tick()
+            self.assertNotEqual(maze_solver.TURNING, self.node.state)
+        self.assertNotIn('RELEASE_BRANCH', [r.get('type') for r in self.reports])
+
+    def test_near_goal_without_red_is_not_arrived(self):
+        self.use_team()
+        self.robot = FloorHarness(self.node, [(-1.0, 0.0, 1.0, 0.0)], self.clock)
+        self.node._change_state(maze_solver.FOLLOW)
+        self.node.team_goal = {'robot': 'mbot0', 'x': 0.3, 'y': 0.0}
+        for _ in range(5):
+            self.robot.tick()
+        self.assertNotEqual(maze_solver.GOAL_REACHED, self.node.state)
+
+    def test_goal_route_turns_robot_back(self):
+        self.turn_back_setup()
+        self.node.team_peers = {}
+        branch = {'junction_id': 3, 'direction': 0, 'choice': 'straight',
+                  'request_id': 'r1', 'previous_route_order': None}
+        self.node.active_team_branch = dict(branch)
+        self.robot.tick()
+        self.order('GOAL_ROUTE', turn_back=True)
+        self.assertEqual(maze_solver.TURNING, self.node.state)
+        self.assertEqual('UTURN', self.node.turn_kind)
+        self.assertIn('RELEASE_BRANCH', [r.get('type') for r in self.reports])
+
+    def test_goal_route_ignored_when_returning(self):
+        self.turn_back_setup()
+        self.node.team_peers = {}
+        self.node.returning = True
+        self.node._change_state(maze_solver.RETURNING)
+        self.robot.tick()
+        self.order('GOAL_ROUTE', turn_back=True)
+        self.assertEqual(maze_solver.RETURNING, self.node.state)
+
+    def test_goal_reported_once(self):
+        self.goal_setup()
+        self.run_until(lambda: self.node.state == maze_solver.GOAL_REACHED)
+        self.node._change_state(maze_solver.FOLLOW)  # e.g. knocked off and back
+        self.robot.tick()
+        self.assertEqual(1, len(self.goals()))
+
+    def test_parking_entered_off_line_creeps_in(self):
+        # Entering the area 5 cm beside the line: no sensor sees black yet.
+        self.goal_setup()
+        self.node._update_pose(0.1, 0.05, 0.0)
+        self.robot.read_floor()
+        self.robot.tick()
+        self.assertEqual(maze_solver.GOAL_PARKING, self.node.state)
+        self.assertGreater(self.robot.sent[-1].linear.x, 0.0)
+
+    def test_parking_without_red_or_line_recovers(self):
+        self.goal_setup()
+        self.node._update_pose(0.1, 0.05, 0.0)
+        self.robot.read_floor()
+        self.robot.tick()  # parking, creeping
+        self.node._update_pose(1.2, 0.5, 0.0)  # pushed off everything
+        self.robot.read_floor()
+        for _ in range(30):
+            self.robot.tick()
+            if self.node.state != maze_solver.GOAL_PARKING:
+                break
+        self.assertNotEqual(maze_solver.GOAL_PARKING, self.node.state)
+        self.assertNotEqual(maze_solver.GOAL_REACHED, self.node.state)
+
+    def test_queued_outside_area_creeps_up_and_arrives(self):
+        # The area is full: the last robot queues on the line before it.
+        self.use_team()
+        self.node.sensors.goal_color = 'red'
+        self.robot = FloorHarness(self.node, [(-1.0, 0.0, 0.8, 0.0)], self.clock,
+                                  red_boxes=[(0.5, 0.95, -0.15, 0.15)])
+        self.node._change_state(maze_solver.FOLLOW)
+        rear = 0.37
+        for _ in range(300):
+            if self.node.state == maze_solver.GOAL_REACHED:
+                break
+            self.node.team_peers = {'mbot0': {
+                'x': rear + 0.08, 'y': 0.0, 'heading': 0.0,
+                'state': maze_solver.GOAL_REACHED, 'route_order': 0}}
+            gap = rear - (self.node.pose[0] + 0.1)
+            self.node.ultrasonic.distance_m = gap if gap < 0.4 else None
+            self.robot.tick()
+        self.assertEqual(maze_solver.GOAL_REACHED, self.node.state)
+        self.assertLess(self.node.pose[0] + 0.1, rear)
 
 
 if __name__ == '__main__':

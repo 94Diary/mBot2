@@ -37,8 +37,8 @@ HEAD_ON_DETECT_M = 1.20
 HEAD_ON_HEADING_RAD = 2.2
 YIELD_LINE_TURN_GAIN = 0.35
 YIELD_HEADING_GAIN = 0.8
-TEAM_GOAL_RADIUS_M = 0.55
-TEAM_ASSEMBLY_RADIUS_M = 1.45
+GOAL_PARK_GAP_M = 0.10  # queue this close behind a teammate inside the goal area
+GOAL_PARK_ENTRY_M = 0.15  # drive at least this far in before a missing line means "end"
 
 TURN_GAIN = 0.15
 MAX_TURN = 0.5
@@ -109,6 +109,7 @@ YIELD_ESCAPE = 'YIELD_ESCAPE'
 YIELD_WAIT = 'YIELD_WAIT'
 GOAL_REACHED = 'GOAL_REACHED'
 HOLDING = 'HOLDING'  # stopped by the team while a teammate hides
+GOAL_PARKING = 'GOAL_PARKING'  # inside the red goal area, driving in to park
 # A peer stopped or turning on the spot at a junction points anywhere (a
 # scan ends at -130 deg); its heading says nothing about whether it is
 # coming back down this corridor.
@@ -158,6 +159,9 @@ class MazeSolver(Node):
         self.head_on_wait = None  # {'peer', 'since'} while the team decides
         self.head_on_fallback_until = {}
         self.peer_wait = None  # {'peer', 'since'} while stopped behind a teammate
+        self.goal_reported = False
+        self.park_start_distance = 0.0
+        self.park_heading = 0.0
         self.team_encounter = None
         self.hold_resume_state = FOLLOW
         self.route_steps = []         # [{'node', 'exit_dir', 'heading'}, ...]
@@ -368,6 +372,11 @@ class MazeSolver(Node):
             self._change_state(self.hold_resume_state)
         elif kind == 'CLEAR':
             self.escape_cleared = True
+        elif kind == 'GOAL_ROUTE':
+            if (order.get('turn_back') and not self.returning and self.state in
+                    (FOLLOW, APPROACH_JUNCTION, BRANCH_CAPTURE, ALIGN_LINE)):
+                self.get_logger().info('ทีมเจอเป้าหมายแล้ว และทางกลับใกล้กว่า: กลับตัวไปเป้าหมาย')
+                self._begin_turn_back(None)
 
     def _on_head_on(self, name, peer):
         """Ask the team who hides; True while this robot must stay put."""
@@ -421,7 +430,8 @@ class MazeSolver(Node):
         self.junction_needs_request = False
         self.scan_pending = False
         self.center_on_axle = False
-        self.get_logger().info(f'กลับตัวให้ {peer}: ทางนี้มีเพื่อนสำรวจอยู่แล้ว')
+        if peer is not None:
+            self.get_logger().info(f'กลับตัวให้ {peer}: ทางนี้มีเพื่อนสำรวจอยู่แล้ว')
         if self.returning:
             # Heading back already: turn round and explore on, asking anew.
             self.returning = False
@@ -583,7 +593,7 @@ class MazeSolver(Node):
             forward = dx * math.cos(pose[2]) + dy * math.sin(pose[2])
             side = abs(-dx * math.sin(pose[2]) + dy * math.cos(pose[2]))
             opposite = abs(angle_difference(peer['heading'], pose[2]))
-            if peer.get('state') in PIVOTING_STATES + (GOAL_REACHED,):
+            if peer.get('state') in PIVOTING_STATES + (GOAL_REACHED, GOAL_PARKING):
                 continue  # stopped where it is: walk up and wait behind it
             if (0.0 < forward < HEAD_ON_DETECT_M and side < 0.32
                     and opposite > HEAD_ON_HEADING_RAD):
@@ -1436,26 +1446,6 @@ class MazeSolver(Node):
                 self._team_report(self.pending_team_request)
                 self.last_team_request_at = now
 
-        if self.team_enabled and self.team_goal is not None and self.pose is not None:
-            world = self._world_pose()
-            goal_distance = math.hypot(world[0] - self.team_goal['x'],
-                                       world[1] - self.team_goal['y'])
-            peer_ahead = self._peer_ahead()
-            queued_behind_teammate = (
-                goal_distance < TEAM_ASSEMBLY_RADIUS_M
-                and peer_ahead is not None
-                and peer_ahead[1].get('state') == GOAL_REACHED)
-            if goal_distance < TEAM_GOAL_RADIUS_M or queued_behind_teammate:
-                if self.state != GOAL_REACHED:
-                    if queued_behind_teammate and goal_distance >= TEAM_GOAL_RADIUS_M:
-                        self.get_logger().debug(
-                            f'รวมพลหลังเพื่อนใกล้เป้าหมาย ระยะ {goal_distance:.2f} m')
-                        self._trail_event('TEAM_ASSEMBLED_NEAR_GOAL')
-                    else:
-                        self.get_logger().debug('ถึงจุดรวมพลใกล้เป้าหมายของทีม')
-                        self._trail_event('TEAM_GOAL_REACHED')
-                    self._change_state(GOAL_REACHED)
-
         if self.state == GOAL_REACHED:
             self.cmd_pub.publish(cmd)
             return
@@ -1705,13 +1695,41 @@ class MazeSolver(Node):
             self.cmd_pub.publish(cmd)
             return
 
-        if self.sensors.any_green():
-            if self.team_enabled:
-                world = self._world_pose()
-                self._team_report({'type': 'GOAL', 'x': world[0], 'y': world[1],
-                                   'approach_heading': world[2]})
-            self._trail_event('GOAL')
-            self._change_state(GOAL_REACHED)
+        if self.state not in (GOAL_PARKING, GOAL_REACHED) and self.sensors.any_green():
+            if not self.goal_reported:
+                self.goal_reported = True
+                if self.team_enabled:
+                    world = self._world_pose()
+                    self._team_report({'type': 'GOAL', 'x': world[0], 'y': world[1],
+                                       'approach_heading': world[2]})
+                self._trail_event('GOAL')
+            self.get_logger().info('เห็นพื้นที่เป้าหมาย: เดินตามเส้นเข้าไปจอด')
+            self.park_start_distance = self.distance_total
+            self.park_heading = self.pose[2]
+            self._change_state(GOAL_PARKING)
+
+        if self.state == GOAL_PARKING:
+            # Drive in along the line; stop at its end or close behind a
+            # teammate already parked. Nothing else matters in here.
+            driven = self.distance_total - self.park_start_distance
+            if self.ultrasonic.obstacle_ahead(GOAL_PARK_GAP_M):
+                if self.sensors.any_green():
+                    self.get_logger().info('จอดในพื้นที่เป้าหมายแล้ว')
+                    self._change_state(GOAL_REACHED)
+            elif self.sensors.any_black():
+                cmd.linear.x = APPROACH_SPEED
+                cmd.angular.z = self._line_follow_turn()
+            elif driven < GOAL_PARK_ENTRY_M and self.sensors.any_green():
+                # Came in beside the line (e.g. mid-turn): creep straight in.
+                cmd.linear.x = APPROACH_SPEED
+                cmd.angular.z = max(-MAX_TURN, min(MAX_TURN, angle_difference(
+                    self.park_heading, self.pose[2])))
+            elif self.sensors.any_green():
+                self.get_logger().info('จอดในพื้นที่เป้าหมายแล้ว')
+                self._change_state(GOAL_REACHED)
+            else:
+                # Neither line nor red: find the line again, then park.
+                self._begin_line_recovery(FOLLOW)
             self.cmd_pub.publish(cmd)
             return
 
@@ -1744,7 +1762,8 @@ class MazeSolver(Node):
                 opposite = (abs(angle_difference(peer_pose['heading'],
                                                  self._world_pose()[2]))
                             > HEAD_ON_HEADING_RAD
-                            and peer_pose.get('state') not in PIVOTING_STATES + (GOAL_REACHED,))
+                            and peer_pose.get('state') not in
+                            PIVOTING_STATES + (GOAL_REACHED, GOAL_PARKING))
                 # Only a lost peer may back into us while it searches; one
                 # squaring up after a turn is driving away, so just wait.
                 recovering = peer_pose.get('state') == LINE_LOST
@@ -1768,8 +1787,17 @@ class MazeSolver(Node):
                         and peer_distance > 0.40):
                     # Wait for the later robot to back away; do not mark its
                     # occupied corridor as a wall or a blocked branch.
-                    if (not self.head_on_hiding
-                            and peer_pose.get('state') != GOAL_REACHED):
+                    if peer_pose.get('state') in (GOAL_REACHED, GOAL_PARKING):
+                        # Queue for the goal: close up behind the parked
+                        # teammate; at the parking gap this robot is parked.
+                        if not self.ultrasonic.obstacle_ahead(GOAL_PARK_GAP_M):
+                            if self.sensors.any_black():
+                                self._follow_line(cmd, APPROACH_SPEED)
+                        elif peer_pose.get('state') == GOAL_REACHED:
+                            self.get_logger().info('จอดต่อท้ายเพื่อนในแถวเป้าหมายแล้ว')
+                            self._change_state(GOAL_REACHED)
+                            cmd = Twist()
+                    elif not self.head_on_hiding:
                         if self.peer_wait is None or self.peer_wait['peer'] != peer_name:
                             self.peer_wait = {'peer': peer_name, 'since': now}
                         elif now - self.peer_wait['since'] > PEER_WAIT_TURN_BACK_SECONDS:

@@ -123,7 +123,7 @@
         </material>
       </visual>
       <visual name="line_3">
-        <pose>-1.25 0.0 0.001 0 0 0</pose>
+        <pose>-1.25 0.0 0.004 0 0 0</pose>
         <geometry><box><size>0.025 0.525 0.002</size></box></geometry>
         <material>
           <ambient>0.02 0.02 0.02 1</ambient>
@@ -132,7 +132,7 @@
         </material>
       </visual>
       <visual name="line_4">
-        <pose>-1.25 0.5 0.001 0 0 0</pose>
+        <pose>-1.25 0.5 0.004 0 0 0</pose>
         <geometry><box><size>0.025 0.525 0.002</size></box></geometry>
         <material>
           <ambient>0.02 0.02 0.02 1</ambient>
@@ -653,9 +653,10 @@
           <specular>0.05 0.05 0.05 1</specular>
         </material>
       </visual>
-      <visual name="goal">
-        <pose>-1.25 -0.25 0.0015 0 0 0</pose>
-        <geometry><box><size>0.14 0.14 0.003</size></box></geometry>
+      <!-- Goal area: all robots park inside it, queued along the black line that runs through it -->
+      <visual name="goal_area">
+        <pose>-1.25 0.15 0.0025 0 0 0</pose>
+        <geometry><box><size>0.30 0.90 0.002</size></box></geometry>
         <material>
           <ambient>0.9 0.05 0.05 1</ambient>
           <diffuse>0.9 0.05 0.05 1</diffuse>
