@@ -804,7 +804,12 @@ class BlackJunctionScanTest(unittest.TestCase):
         branch = {'junction_id': 3, 'direction': 0, 'choice': 'straight',
                   'request_id': 'r1', 'previous_route_order': None}
         self.node.active_team_branch = dict(branch)
-        self.tick_turn_back(80)
+        start_x = self.node.pose[0]
+        for _ in range(80):  # until the turn is done and it drives back
+            self.peer(start_x + self.gap, self.peer_heading, self.peer_state)
+            self.robot.tick()
+            if self.node.state == maze_solver.RETURNING:
+                break
         self.assertIn({'type': 'RELEASE_BRANCH', **branch, 'peer': 'mbot0'}, self.reports)
         self.assertNotIn('BLOCKED', [r.get('type') for r in self.reports])
         self.assertTrue(self.node.returning)
@@ -1070,6 +1075,15 @@ class BlackJunctionScanTest(unittest.TestCase):
             self.robot.tick()
         self.assertEqual(maze_solver.GOAL_REACHED, self.node.state)
         self.assertLess(self.node.pose[0] + 0.1, rear)
+
+    def test_leaves_junction_as_soon_as_team_answers(self):
+        self.wait_at_junction_facing(0.0)
+        self.node.team_choice = {
+            'choice': 'left', 'junction_id': 1, 'direction': 1,
+            'request_id': 'r1', 'junction_x': 0.5, 'junction_y': 0.0,
+            'heading': math.pi / 2}
+        self.robot.tick()  # answer already in: no fixed one-second pause
+        self.assertEqual(maze_solver.TURNING, self.node.state)
 
 
 if __name__ == '__main__':

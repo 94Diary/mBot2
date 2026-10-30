@@ -192,6 +192,21 @@ class TeamFrontierTest(unittest.TestCase):
         self.assertEqual('JUNCTION', j['kind'])
         self.assertEqual(goals[0]['id'], j['branches'][SOUTH]['leads_to']['node'])
 
+    def test_two_free_robots_head_for_different_frontiers(self):
+        # From J both arms are explored; B (north, 1 m) and C (east, 1.5 m)
+        # each still have a new arm. The second robot must not chase B too.
+        j, a, b = self.visited_cross()
+        c = self.node(1.5, 0)
+        self.join(a, EAST, c, WEST)
+        a['branches'][EAST]['visited_by'] = ['mbot2']
+        c['branches'][WEST]['visited_by'] = ['mbot2']
+        self.arm(c, EAST)
+        first = self.ask('mbot1', j, -math.pi / 2, [EAST, NORTH])
+        second = self.ask('mbot2', j, -math.pi / 2, [EAST, NORTH])
+        self.assertEqual(NORTH, first['direction'])
+        self.assertEqual(EAST, second['direction'])
+        self.assertEqual('TOWARD_UNEXPLORED', second['reason'])
+
 
 if __name__ == '__main__':
     unittest.main()

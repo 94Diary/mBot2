@@ -45,7 +45,7 @@ MAX_TURN = 0.5
 LINE_CORRECTION_SPEED = 0.18
 LINE_CORRECTION_GAIN = 0.65
 LINE_CORRECTION_MAX_TURN = 1.2
-ROTATE_SPEED = 0.85
+ROTATE_SPEED = 1.2  # ~7 deg per 10 Hz tick: still lands inside the ±4 deg turn window
 TURN_TOLERANCE_RAD = 0.07
 ALIGN_SPEED = 0.07              # เดินช้าเฉพาะเมื่อเซนเซอร์ในเริ่มเห็นเส้นแล้ว
 ALIGN_TURN_GAIN = 0.50
@@ -2097,7 +2097,10 @@ class MazeSolver(Node):
 
         if self.state == JUNCTION_PAUSE:
             cmd = Twist()
-            if now - self.state_start_time >= JUNCTION_PAUSE_SECONDS:
+            # Leave as soon as the team has answered; the pause is only the
+            # longest wait before re-checking an unanswered request.
+            answered = self.team_enabled and self.team_choice is not None
+            if answered or now - self.state_start_time >= JUNCTION_PAUSE_SECONDS:
                 if self.team_enabled:
                     if (self.team_choice is not None and
                             self.team_choice.get('choice') is None):

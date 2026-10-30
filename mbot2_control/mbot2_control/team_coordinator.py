@@ -48,6 +48,8 @@ class TeamLedger:
         self.next_encounter_id = 1
         # Corridors a robot gave up to a teammate it met head-on.
         self.avoid = {}
+        # Junction with a new branch each idle robot is being steered to.
+        self.frontier_claims = {}
 
     def update_pose(self, report, now):
         robot = report['robot']
@@ -200,9 +202,16 @@ class TeamLedger:
             reach = (self._graph_distances([goal_node['id']], robot, now)
                      if goal_node is not None else {})
         else:
+            self.frontier_claims.pop(robot, None)
             frontier = [n['id'] for n in self.junctions.values()
                         if n['id'] != node['id'] and self._has_new_branch(n, robot, now)]
-            reach = self._graph_distances(frontier, robot, now)
+            # Leave a frontier a teammate is already heading for, if there
+            # is another one; otherwise share it.
+            claimed = {target for other, target in self.frontier_claims.items()
+                       if other != robot and self._live(other, now)}
+            free = [n for n in frontier if n not in claimed]
+            reach, origin = self._graph_distances(free or frontier, robot, now,
+                                                  with_origin=True)
         for option in report['choices']:
             key = direction_key(float(option['heading']))
             branch = self._branch(node, key, option['heading'])
@@ -283,6 +292,9 @@ class TeamLedger:
             else:
                 reason = ('TOWARD_UNEXPLORED' if priority[1] > -math.inf
                           else 'REVISIT_OPEN_BRANCH')
+                link = branch.get('leads_to')
+                if reason == 'TOWARD_UNEXPLORED' and link is not None:
+                    self.frontier_claims[robot] = origin.get(link['node'])
             if not shared:
                 branch['owner'] = robot
                 branch['status'] = 'CLAIMED'
@@ -588,9 +600,10 @@ class TeamLedger:
                 return True
         return False
 
-    def _graph_distances(self, sources, robot, now):
+    def _graph_distances(self, sources, robot, now, with_origin=False):
         """Map distance from every node to the nearest of sources."""
         best = {source: 0.0 for source in sources}
+        origin = {source: source for source in sources}
         queue = [(0.0, source) for source in sources]
         heapq.heapify(queue)
         while queue:
@@ -609,8 +622,9 @@ class TeamLedger:
                 step = cost + math.hypot(other['x'] - node['x'], other['y'] - node['y'])
                 if step < best.get(other['id'], math.inf):
                     best[other['id']] = step
+                    origin[other['id']] = origin[node_id]
                     heapq.heappush(queue, (step, other['id']))
-        return best
+        return (best, origin) if with_origin else best
 
     def _distance_via(self, node, branch, reach):
         """Length of this branch plus the mapped distance beyond it."""
