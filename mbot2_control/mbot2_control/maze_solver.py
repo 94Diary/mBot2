@@ -83,6 +83,11 @@ SCAN_SIDE_MIN_RAD = math.radians(50)      # 50°..130° is a side arm
 CENTER_TOLERANCE_M = 0.02
 KNOWN_NODE_RADIUS_M = 0.10      # pivot is within ~2 cm of a real node
 TEAM_MAP_FRESH_SECONDS = 1.0    # state arrives every 0.5 s
+HEAD_ON_DECISION_SECONDS = 2.0  # wait this long for the team's hide order
+HEAD_ON_FALLBACK_SECONDS = 5.0  # then use the old rule for this peer
+PEER_WAIT_TURN_BACK_SECONDS = 15.0  # stuck behind a teammate: go elsewhere
+HOLD_TIMEOUT_SECONDS = 60.0     # wall clock: the sim runs at ~1/3 speed
+HIDE_DEPTH_M = 0.25             # wheels this far into the hiding branch
 
 SEARCH = 'SEARCH'
 FOLLOW = 'FOLLOW'
@@ -103,6 +108,7 @@ YIELD_TURN = 'YIELD_TURN'
 YIELD_ESCAPE = 'YIELD_ESCAPE'
 YIELD_WAIT = 'YIELD_WAIT'
 GOAL_REACHED = 'GOAL_REACHED'
+HOLDING = 'HOLDING'  # stopped by the team while a teammate hides
 # A peer stopped or turning on the spot at a junction points anywhere (a
 # scan ends at -130 deg); its heading says nothing about whether it is
 # coming back down this corridor.
@@ -127,8 +133,12 @@ class MazeSolver(Node):
         self.declare_parameter('spawn_yaw', 0.0)
         self.declare_parameter('junction_color', 'yellow')
         self.declare_parameter('goal_color', 'green')
+        # True: C4 (team arbitrates, loser hides in a side branch).
+        # False: the robot without priority turns round and drives back.
+        self.declare_parameter('head_on_hiding', False)
         self.team_enabled = bool(self.get_parameter('team_enabled').value)
         self.use_ground_truth = bool(self.get_parameter('use_ground_truth').value)
+        self.head_on_hiding = bool(self.get_parameter('head_on_hiding').value)
         self.spawn_pose = (
             float(self.get_parameter('spawn_x').value),
             float(self.get_parameter('spawn_y').value),
@@ -145,6 +155,15 @@ class MazeSolver(Node):
         self.team_goal = None
         self.team_peers = {}
         self.team_nodes = []  # shared map from /maze_team/state
+        self.head_on_wait = None  # {'peer', 'since'} while the team decides
+        self.head_on_fallback_until = {}
+        self.peer_wait = None  # {'peer', 'since'} while stopped behind a teammate
+        self.team_encounter = None
+        self.hold_resume_state = FOLLOW
+        self.route_steps = []         # [{'node', 'exit_dir', 'heading'}, ...]
+        self.route_after = FOLLOW     # state to drive in between route steps
+        self.escape = None            # the YIELD order being carried out
+        self.escape_cleared = False
         self.team_route_order = None
         self.team_route_order_local = False
         self.last_team_pose_at = 0.0
@@ -320,6 +339,10 @@ class MazeSolver(Node):
             decision = json.loads(msg.data)
         except (ValueError, TypeError):
             return
+        if decision.get('type') is not None:
+            if decision.get('robot') == self.robot_id:
+                self._on_team_order(decision)
+            return
         pending = self.pending_team_request
         if (pending is not None and decision.get('robot') == self.robot_id
                 and decision.get('request_id') == pending['request_id']):
@@ -327,6 +350,161 @@ class MazeSolver(Node):
             self.get_logger().debug(
                 f"ทีมจัดทางแยก J{decision.get('junction_id')}: "
                 f"{decision.get('choice')} (ร่วมทาง={decision.get('shared', False)})")
+
+    def _on_team_order(self, order):
+        """Head-on orders from the team: YIELD, HOLD, GO or CLEAR."""
+        kind = order['type']
+        self.head_on_wait = None
+        if kind == 'YIELD':
+            self._begin_escape(order)
+        elif kind == 'HOLD':
+            self.team_encounter = order
+            self.hold_resume_state = RETURNING if self.returning else FOLLOW
+            self.get_logger().info('ทีมสั่งให้รอ: เพื่อนกำลังหลบเข้ากิ่งข้าง')
+            self._change_state(HOLDING)
+        elif kind == 'GO' and self.state == HOLDING:
+            self.get_logger().info('ทีมให้ไปต่อได้')
+            self.team_encounter = None
+            self._change_state(self.hold_resume_state)
+        elif kind == 'CLEAR':
+            self.escape_cleared = True
+
+    def _on_head_on(self, name, peer):
+        """Ask the team who hides; True while this robot must stay put."""
+        now = time.monotonic()
+        if self.head_on_fallback_until.get(name, 0.0) <= now:
+            if self.head_on_wait is None or self.head_on_wait['peer'] != name:
+                self.head_on_wait = {'peer': name, 'since': now}
+                self._team_report({'type': 'HEAD_ON', 'peer': name})
+            if now - self.head_on_wait['since'] < HEAD_ON_DECISION_SECONDS:
+                return True
+            self.get_logger().warning('ทีมไม่ตอบเรื่องหุ่นสวนกัน: ใช้กฎลำดับเดิม')
+            self.head_on_wait = None
+            self.head_on_fallback_until[name] = now + HEAD_ON_FALLBACK_SECONDS
+        if self._peer_has_priority(name, peer):
+            self._begin_yield(name)
+            return True
+        return False
+
+    def _should_turn_back(self, name, peer):
+        """Decide which of two robots meeting head-on turns round (both agree)."""
+        mine = self._peer_behind_close()
+        theirs = bool(peer.get('blocked_behind', False))
+        if mine != theirs:
+            return theirs  # the one with a teammate on its tail cannot turn
+        mine, theirs = self.returning, bool(peer.get('returning', False))
+        if mine != theirs:
+            return theirs  # one is leaving a dead end: the other gives way
+        return self._peer_has_priority(name, peer)
+
+    def _begin_turn_back(self, peer):
+        """Meeting a teammate head-on: it already explores this corridor."""
+        if self._peer_behind_close():
+            return  # turning would swing into the teammate behind; wait
+        if (self.state == CENTERING and not self.junction_needs_request
+                and not self.scan_pending and self.active_team_branch is not None):
+            # The branch was chosen at this junction but not entered yet.
+            self._team_report({'type': 'CANCEL_BRANCH',
+                               'request_id': self.active_team_branch['request_id']})
+            self.team_route_order = self.active_team_branch['previous_route_order']
+            self.team_route_order_local = self.team_route_order is not None
+            self.active_team_branch = None
+        elif self.active_team_branch is not None:
+            self._team_report({'type': 'RELEASE_BRANCH', **self.active_team_branch,
+                               'peer': peer})
+            self.active_team_branch = None
+        if self.pending_team_request is not None:
+            self._team_report({'type': 'CANCEL_BRANCH',
+                               'request_id': self.pending_team_request['request_id']})
+            self.pending_team_request = None
+            self.team_choice = None
+        self.junction_needs_request = False
+        self.scan_pending = False
+        self.center_on_axle = False
+        self.get_logger().info(f'กลับตัวให้ {peer}: ทางนี้มีเพื่อนสำรวจอยู่แล้ว')
+        if self.returning:
+            # Heading back already: turn round and explore on, asking anew.
+            self.returning = False
+            self._start_turn(math.pi, FOLLOW, 'CORNER')
+        else:
+            self._start_turn(math.pi, RETURNING, 'UTURN')
+
+    def _begin_escape(self, order):
+        """Turn round and drive the team's route to a branch to hide in."""
+        self.team_encounter = order
+        self.escape = {'hide_node': order['hide_node'], 'hide_dir': order['hide_dir'],
+                       'hide_heading': float(order['hide_heading']),
+                       'hiding': False, 'hide_center': None}
+        self.escape_cleared = False
+        self.route_steps = list(order['route'])
+        self.route_after = YIELD_ESCAPE
+        self.turn_target = self.pose[2] + math.pi
+        self.get_logger().info(
+            f"ทีมให้หลบ: กลับหัวแล้วไปหลบที่ J{order['hide_node']}")
+        self._change_state(YIELD_TURN)
+
+    def _follow_route_step(self, node):
+        """At the next node of the route, turn onto its exit; False otherwise."""
+        if not self.route_steps or self.route_steps[0]['node'] != node['id']:
+            return False
+        step = self.route_steps.pop(0)
+        world_yaw = self._world_pose()[2]
+        self.trigger_resume_distance = self.distance_total + JUNCTION_ESCAPE_DISTANCE_M
+        if not self.route_steps and self.escape is not None:
+            self.escape['hiding'] = True
+            self.escape['hide_center'] = self._axle_point(self._world_pose())
+        self._start_turn(angle_difference(float(step['heading']), world_yaw),
+                         self.route_after, 'ROUTE')
+        return True
+
+    def _hide_depth(self):
+        """How far the axle is along the hiding branch from its junction."""
+        ax, ay = self._axle_point(self._world_pose())
+        hx, hy = self.escape['hide_center']
+        heading = self.escape['hide_heading']
+        return (ax - hx) * math.cos(heading) + (ay - hy) * math.sin(heading)
+
+    def _resume_after_hiding(self):
+        """Back at the hiding junction's centre: ask the team as usual."""
+        escape = self.escape
+        hx, hy = escape['hide_center']
+        node = next((n for n in self.team_nodes if n['id'] == escape['hide_node']), None)
+        approach = escape['hide_heading'] + math.pi
+        self.scan_hits = {'straight': [], 'left': [], 'right': []}
+        for key, branch in (node or {'branches': {}})['branches'].items():
+            if int(key) == escape['hide_dir']:
+                continue
+            heading = branch.get('heading', int(key) * math.pi / 2)
+            self._bin_scan_angle(angle_difference(heading, approach))
+        exits = {name: approach + sum(angles) / len(angles)
+                 for name, angles in self.scan_hits.items() if angles}
+        local_approach = self.pose[2] + angle_difference(approach, self._world_pose()[2])
+        index = next((i for i in range(len(self.junctions) - 1, -1, -1)
+                      if math.hypot(self.junctions[i]['world_position'][0] - hx,
+                                    self.junctions[i]['world_position'][1] - hy) <= 0.25),
+                     None)
+        if index is None:
+            self.junction_count += 1
+            self.junctions.append({'id': self.junction_count})
+        else:
+            self.junctions = self.junctions[:index + 1]
+        self.junctions[-1].update({
+            'position': self._axle_point(self.pose), 'world_position': (hx, hy),
+            'heading': local_approach, 'world_heading': approach,
+            'left_open': 'left' in exits, 'right_open': 'right' in exits,
+            'straight_open': 'straight' in exits, 'exit_headings': exits})
+        self.active_junction_world = (hx, hy)
+        self.returning = False
+        self.escape = None
+        self.team_encounter = None
+        self.escape_cleared = False
+        self.route_steps = []
+        self.get_logger().info('เพื่อนผ่านแล้ว: ออกจากที่หลบและขอทางจากทีม')
+        self._request_team_branch(
+            False, 'left' in exits, 'right' in exits, (hx, hy),
+            straight_open='straight' in exits, approach_heading=approach,
+            exit_headings=exits, offer_back=False)  # back = the hiding branch
+        self._change_state(JUNCTION_PAUSE)
 
     def _on_team_state(self, msg):
         try:
@@ -405,8 +583,8 @@ class MazeSolver(Node):
             forward = dx * math.cos(pose[2]) + dy * math.sin(pose[2])
             side = abs(-dx * math.sin(pose[2]) + dy * math.cos(pose[2]))
             opposite = abs(angle_difference(peer['heading'], pose[2]))
-            if peer.get('state') in PIVOTING_STATES:
-                continue
+            if peer.get('state') in PIVOTING_STATES + (GOAL_REACHED,):
+                continue  # stopped where it is: walk up and wait behind it
             if (0.0 < forward < HEAD_ON_DETECT_M and side < 0.32
                     and opposite > HEAD_ON_HEADING_RAD):
                 if closest is None or forward < closest[2]:
@@ -525,7 +703,8 @@ class MazeSolver(Node):
 
     def _request_team_branch(self, returning, left_open, right_open,
                              position_override=None, straight_open=True,
-                             approach_heading=None, exit_headings=None):
+                             approach_heading=None, exit_headings=None,
+                             offer_back=True):
         world = self._world_pose()
         position = position_override or self._world_sensor_position()
         if world is None or position is None:
@@ -545,7 +724,8 @@ class MazeSolver(Node):
         if right_open:
             choices.append({'name': 'right', 'heading': exit_headings.get(
                 'right', world[2] - math.pi / 2)})
-        choices.append({'name': 'back', 'heading': world[2] + math.pi})
+        if offer_back:
+            choices.append({'name': 'back', 'heading': world[2] + math.pi})
         if returning and self.junctions:
             node = self.junctions[-1]
             original = node.get('world_heading', world[2] + math.pi)
@@ -622,7 +802,11 @@ class MazeSolver(Node):
         reason = {'UNEXPLORED_BRANCH': 'สำรวจทางที่ยังไม่เคยไป',
                   'KNOWN_RETURN_ROUTE': 'ไม่เหลือกิ่งอื่นที่เปิด จึงย้อนทางเข้าเดิม',
                   'REVISIT_OPEN_BRANCH': 'กิ่งที่เปิดเคยถูกเลือกแล้ว จึงใช้ทางเดิมต่อ',
-                  'TOWARD_GOAL': 'เดินไปทางเป้าหมายที่ทีมพบ'}.get(choice.get('reason'), 'ทีมเลือกทาง')
+                  'TOWARD_GOAL': 'เดินไปทางเป้าหมายที่ทีมพบ',
+                  'ROUTE_TO_GOAL': 'ทางที่สั้นที่สุดไปเป้าหมายตามแผนที่',
+                  'LIKELY_KNOWN_BRANCH': 'กิ่งที่น่าจะพาไปที่ที่ทีมรู้แล้ว',
+                  'TOWARD_UNEXPLORED': 'ไปหาแยกที่ยังมีทางไม่ได้สำรวจที่ใกล้ที่สุด',
+                  }.get(choice.get('reason'), 'ทีมเลือกทาง')
         self.get_logger().info(f'เลือก{label}ที่ J{choice["junction_id"]}: {reason}')
         self.pending_team_request = None
         self.team_choice = None
@@ -953,7 +1137,9 @@ class MazeSolver(Node):
             # The other arm may pass under its sensor a frame later.
             self.scan_sides |= sides
             return
-        if (self.pose is None or self.state not in (FOLLOW, RETURNING)
+        hiding = self.escape is not None and self.escape['hiding']
+        if (self.pose is None or hiding
+                or self.state not in (FOLLOW, RETURNING, YIELD_ESCAPE)
                 or self.distance_total < self.trigger_resume_distance):
             return
         if self.outer_hit_position is None:
@@ -1014,6 +1200,20 @@ class MazeSolver(Node):
             self.scan_hits['straight'].append(0.0)
         self.scan_phases = [side for side in ('left', 'right')
                             if side in self.scan_sides]
+        if self.escape is not None and not self.escape['hiding']:
+            node = self._known_node(self.scan_pivot_world)
+            if node is not None and self._follow_route_step(node):
+                return
+            px, py = self.scan_pivot_world
+            near = [(n['id'], n['kind'], round(n['x'], 2), round(n['y'], 2))
+                    for n in self.team_nodes
+                    if math.hypot(n['x'] - px, n['y'] - py) < 0.4]
+            self.get_logger().warning(
+                'ทางหลบไม่ตรงกับแผนที่: เลิกหลบ ใช้การสแกนปกติ; '
+                f'pivot=({px:.2f},{py:.2f}) matched={node and node["id"]} '
+                f'next={self.route_steps[:1]} near={near}')
+            self.escape = None
+            self.route_steps = []
         known = (None if self.scan_from_line_end
                  else self._known_node(self.scan_pivot_world))
         if known is not None:
@@ -1222,6 +1422,7 @@ class MazeSolver(Node):
                                    'heading': world[2], 'state': self.state,
                                    'route_order': self.team_route_order,
                                    'returning': self.returning,
+                                   'blocked_behind': self._peer_behind_close(),
                                    'yield_to': self.yield_peer_name if self.state == YIELDING else None,
                                    'yield_junction': (
                                        {'x': self.yield_junction_world[0],
@@ -1299,11 +1500,46 @@ class MazeSolver(Node):
             # Not while waiting at a junction: after a scan the robot faces
             # wherever the sweep stopped, not the way it will drive.
             head_on = self._head_on_peer()
-            if (head_on is not None and
-                    self._peer_has_priority(head_on[0], head_on[1])):
-                self._begin_yield(head_on[0])
+            if head_on is None:
+                self.head_on_wait = None
+            elif self.head_on_hiding:
+                if self._on_head_on(head_on[0], head_on[1]):
+                    self.cmd_pub.publish(cmd)
+                    return
+            elif self._should_turn_back(head_on[0], head_on[1]):
+                self._begin_turn_back(head_on[0])
                 self.cmd_pub.publish(cmd)
                 return
+
+        if self.state == YIELD_TURN:
+            error = angle_difference(self.turn_target, self.pose[2])
+            if abs(error) <= TURN_TOLERANCE_RAD:
+                self._change_state(YIELD_ESCAPE)
+            else:
+                cmd.angular.z = ROTATE_SPEED if error > 0 else -ROTATE_SPEED
+            self.cmd_pub.publish(cmd)
+            return
+
+        if self.state == YIELD_WAIT:
+            if self.escape_cleared:
+                if self._hide_depth() > CENTER_TOLERANCE_M:
+                    # Straight back out of the branch to the junction centre.
+                    cmd.linear.x = -SEARCH_SPEED
+                    cmd.angular.z = max(-MAX_TURN, min(MAX_TURN, 2.0 * angle_difference(
+                        self.escape['hide_heading'], self._world_pose()[2])))
+                else:
+                    self._resume_after_hiding()
+                    cmd = Twist()
+            self.cmd_pub.publish(cmd)
+            return
+
+        if self.state == HOLDING:
+            if now - self.state_start_time >= HOLD_TIMEOUT_SECONDS:
+                self.get_logger().warning('รอนานเกินไปแล้วไม่ได้รับ GO: ไปต่อเอง')
+                self.team_encounter = None
+                self._change_state(self.hold_resume_state)
+            self.cmd_pub.publish(cmd)
+            return
 
         if self.state == YIELDING:
             if self._yield_clear():
@@ -1398,8 +1634,8 @@ class MazeSolver(Node):
                 if self.turn_kind == 'UTURN':
                     self.returning = True
                     self._new_segment()
-                elif self.turn_kind == 'CORNER':
-                    pass  # same corridor: keep the direction and trail
+                elif self.turn_kind in ('CORNER', 'ROUTE'):
+                    pass  # same corridor or a planned route: keep the trail
                 else:
                     self.returning = False
                     self.wait_for_yellow_clear = True
@@ -1481,7 +1717,7 @@ class MazeSolver(Node):
 
         # Let followers back up too, before the front ultrasonic would see
         # the yielding robot as an obstacle. This opens space for a queue.
-        if (self.team_enabled and not self.returning
+        if (self.team_enabled and self.head_on_hiding and not self.returning
                 and self.state in (SEARCH, FOLLOW, APPROACH_JUNCTION,
                                    BRANCH_CAPTURE, REACQUIRE,
                                    ALIGN_LINE)):
@@ -1494,10 +1730,13 @@ class MazeSolver(Node):
                 self.cmd_pub.publish(cmd)
                 return
 
+        if not self.ultrasonic.obstacle_ahead(OBSTACLE_STOP_DISTANCE_M):
+            self.peer_wait = None  # nobody in front any more
         # Stop for one control tick before reversing.
         # Standing or pivoting at a junction cannot hit anything ahead, and
         # the ultrasonic may be pointing down another line.
-        if (self.state not in (REACQUIRE, LINE_LOST, JUNCTION_PAUSE, TURNING)
+        if (self.state not in (REACQUIRE, LINE_LOST, JUNCTION_PAUSE, TURNING,
+                               HOLDING, YIELD_TURN, YIELD_WAIT, YIELD_ESCAPE)
                 and self.ultrasonic.obstacle_ahead(OBSTACLE_STOP_DISTANCE_M)):
             peer = self._peer_ahead() if self.team_enabled else None
             if peer is not None:
@@ -1505,12 +1744,21 @@ class MazeSolver(Node):
                 opposite = (abs(angle_difference(peer_pose['heading'],
                                                  self._world_pose()[2]))
                             > HEAD_ON_HEADING_RAD
-                            and peer_pose.get('state') not in PIVOTING_STATES)
+                            and peer_pose.get('state') not in PIVOTING_STATES + (GOAL_REACHED,))
                 # Only a lost peer may back into us while it searches; one
                 # squaring up after a turn is driving away, so just wait.
                 recovering = peer_pose.get('state') == LINE_LOST
-                if ((opposite or recovering) and
-                        self._peer_has_priority(peer_name, peer_pose)):
+                if opposite:
+                    if self.head_on_hiding:
+                        if self._on_head_on(peer_name, peer_pose):
+                            self.cmd_pub.publish(cmd)
+                            return
+                    elif self._should_turn_back(peer_name, peer_pose):
+                        self._begin_turn_back(peer_name)
+                        self.cmd_pub.publish(cmd)
+                        return
+                if (recovering and self.head_on_hiding
+                        and self._peer_has_priority(peer_name, peer_pose)):
                     self._begin_yield(peer_name)
                     self.cmd_pub.publish(cmd)
                     return
@@ -1520,6 +1768,14 @@ class MazeSolver(Node):
                         and peer_distance > 0.40):
                     # Wait for the later robot to back away; do not mark its
                     # occupied corridor as a wall or a blocked branch.
+                    if (not self.head_on_hiding
+                            and peer_pose.get('state') != GOAL_REACHED):
+                        if self.peer_wait is None or self.peer_wait['peer'] != peer_name:
+                            self.peer_wait = {'peer': peer_name, 'since': now}
+                        elif now - self.peer_wait['since'] > PEER_WAIT_TURN_BACK_SECONDS:
+                            # It is not moving on: leave this corridor to it.
+                            self.peer_wait = None
+                            self._begin_turn_back(peer_name)
                     self.cmd_pub.publish(cmd)
                     return
             else:
@@ -1529,7 +1785,11 @@ class MazeSolver(Node):
                 world = self._world_pose()
                 self._report_node('DEAD_END', world[:2], world[2])
                 self._trail_event('BLOCKED_BRANCH')
-                self._change_state(REVERSING)
+                if self.team_enabled and not self.head_on_hiding and self._peer_behind_close():
+                    # A teammate right behind: turn on the spot, never back into it.
+                    self._start_turn(math.pi, RETURNING, 'UTURN')
+                else:
+                    self._change_state(REVERSING)
                 self.get_logger().warning('เจอกำแพง: ถอยสั้น หมุนกลับ แล้วตามเส้นย้อน')
                 self.cmd_pub.publish(cmd)
                 return
@@ -1666,8 +1926,8 @@ class MazeSolver(Node):
                     cmd.linear.x = SEARCH_SPEED
 
         if (self.black_mode and self.outer_hit_position is not None
-                and self.state in (FOLLOW, RETURNING)):
-            if (self.returning and self.junctions
+                and self.state in (FOLLOW, RETURNING, YIELD_ESCAPE)):
+            if (self.state == RETURNING and self.junctions
                     and math.hypot(
                         self.outer_hit_position[0] - self.junctions[-1]['position'][0],
                         self.outer_hit_position[1] - self.junctions[-1]['position'][1])
@@ -1678,6 +1938,19 @@ class MazeSolver(Node):
                 self._begin_black_junction()
                 self.cmd_pub.publish(Twist())
                 return
+
+        if self.state == YIELD_ESCAPE:
+            if self.escape is not None and self.escape['hiding']:
+                if self._hide_depth() >= HIDE_DEPTH_M:
+                    self._team_report({'type': 'HIDDEN'})
+                    self.get_logger().info('หลบเข้ากิ่งข้างแล้ว: รอเพื่อนผ่าน')
+                    self._change_state(YIELD_WAIT)
+                    self.cmd_pub.publish(Twist())
+                    return
+            if self.ultrasonic.obstacle_ahead(OBSTACLE_STOP_DISTANCE_M):
+                self.cmd_pub.publish(Twist())  # a robot, never a wall: wait
+                return
+            self._follow_line(cmd, RETURN_SPEED)
 
         if self.state == RETURNING:
             distance = self._distance_to_junction()

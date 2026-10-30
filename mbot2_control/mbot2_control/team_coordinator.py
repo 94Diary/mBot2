@@ -43,6 +43,11 @@ class TeamLedger:
         # contradicted an earlier one (kept out of the map, reported).
         self.trails = {}
         self.link_conflicts = []
+        # Head-on encounters: who hides where, and who waits for whom.
+        self.encounters = {}
+        self.next_encounter_id = 1
+        # Corridors a robot gave up to a teammate it met head-on.
+        self.avoid = {}
 
     def update_pose(self, report, now):
         robot = report['robot']
@@ -63,6 +68,7 @@ class TeamLedger:
             'yield_to': report.get('yield_to'),
             'yield_junction': report.get('yield_junction'),
             'yield_escape_heading': report.get('yield_escape_heading'),
+            'blocked_behind': bool(report.get('blocked_behind', False)),
             'route_order': route_order,
             'seen_at': now,
         }
@@ -187,6 +193,15 @@ class TeamLedger:
                 inbound['visited_by'].append(robot)
         candidates = []
         branch_details = []
+        if self.goal is not None:
+            goal_node = next((n for n in self.junctions.values()
+                              if n['kind'] == 'GOAL'), None)
+            reach = (self._graph_distances([goal_node['id']], robot, now)
+                     if goal_node is not None else {})
+        else:
+            frontier = [n['id'] for n in self.junctions.values()
+                        if n['id'] != node['id'] and self._has_new_branch(n, robot, now)]
+            reach = self._graph_distances(frontier, robot, now)
         for option in report['choices']:
             key = direction_key(float(option['heading']))
             branch = self._branch(node, key, option['heading'])
@@ -198,6 +213,8 @@ class TeamLedger:
             })
             if option.get('fallback', option['name'] == 'back'):
                 continue  # use the known inbound route only as a fallback
+            if branch.get('hidden_by') not in (None, robot):
+                continue  # a teammate is hiding in there
             heading = float(option['heading'])
             if branch['status'] == 'BLOCKED':
                 continue
@@ -221,10 +238,18 @@ class TeamLedger:
             else:
                 toward_goal = 0.0
             # Once a goal is known, reaching it matters more than keeping
-            # robots on separate branches. Before that, spread exploration.
-            priority = ((toward_goal, score) if self.goal is not None
-                        else (score, toward_goal))
-            candidates.append((*priority, -len(candidates), option, key))
+            # robots on separate branches: the mapped way there wins, then
+            # the heading. Before that, prefer a truly new branch, then one
+            # that probably closes a loop, then the way to the nearest new one.
+            distance = self._distance_via(node, branch, reach)
+            if self.goal is not None:
+                priority = (distance < math.inf, -distance, toward_goal, score)
+            else:
+                rank = (0 if branch['visited_by'] else
+                        1 if self._likely_known(node, key) else 2)
+                priority = (rank, -distance, score, toward_goal)
+            candidates.append((not self._avoided(robot, node['id'], key, now),
+                               priority, -len(candidates), option, key))
 
         if not candidates:
             for option in report['choices']:
@@ -234,23 +259,29 @@ class TeamLedger:
                 branch = node['branches'].setdefault(
                     key, {'status': 'OPEN', 'owner': None, 'visited_by': []})
                 if branch['status'] != 'BLOCKED':
-                    candidates.append((0, 0, 0, option, key))
+                    candidates.append((True, (0,), 0, option, key))
         if not candidates:
             result = {'robot': robot, 'request_id': request_id,
                       'choice': None, 'junction_id': node['id'],
                       'junction_x': node['x'], 'junction_y': node['y'],
                       'reason': 'NO_OPEN_BRANCH'}
         else:
-            _, _, _, option, key = max(candidates)
+            _, priority, _, option, key = max(candidates, key=lambda c: c[:3])
             branch = node['branches'][key]
             owner = branch['owner']
             owner_live = (owner in self.robots and
                           now - self.robots[owner]['seen_at'] < PEER_TIMEOUT_SECONDS)
             shared = owner not in (None, robot) and owner_live
-            reason = ('TOWARD_GOAL' if self.goal is not None else
-                      'KNOWN_RETURN_ROUTE' if option.get('fallback', option['name'] == 'back') else
-                      'UNEXPLORED_BRANCH' if not branch['visited_by'] else
-                      'REVISIT_OPEN_BRANCH')
+            if option.get('fallback', option['name'] == 'back'):
+                reason = 'KNOWN_RETURN_ROUTE'
+            elif self.goal is not None:
+                reason = 'ROUTE_TO_GOAL' if priority[0] else 'TOWARD_GOAL'
+            elif not branch['visited_by']:
+                reason = ('UNEXPLORED_BRANCH' if priority[0] == 2
+                          else 'LIKELY_KNOWN_BRANCH')
+            else:
+                reason = ('TOWARD_UNEXPLORED' if priority[1] > -math.inf
+                          else 'REVISIT_OPEN_BRANCH')
             if not shared:
                 branch['owner'] = robot
                 branch['status'] = 'CLAIMED'
@@ -310,6 +341,259 @@ class TeamLedger:
             node_id = previous
         return steps[::-1]
 
+    def _live(self, robot, now):
+        pose = self.robots.get(robot)
+        return pose is not None and now - pose['seen_at'] < PEER_TIMEOUT_SECONDS
+
+    def _hide_option(self, robot, other):
+        """Nearest junction behind robot with a branch to wait in."""
+        trail = self.trails.get(robot)
+        pose = self.robots.get(robot)
+        if trail is None or pose is None or trail[0] not in self.junctions:
+            return None
+        start, came_by = self.junctions[trail[0]], trail[1]
+        best = {start['id']: math.hypot(pose['x'] - start['x'], pose['y'] - start['y'])}
+        came_from = {start['id']: (None, came_by)}
+        queue = [(best[start['id']], start['id'])]
+        while queue:
+            cost, node_id = heapq.heappop(queue)
+            if cost > best[node_id]:
+                continue
+            node = self.junctions[node_id]
+            arrival = came_from[node_id][1]
+            if node['kind'] == 'JUNCTION':
+                hide = self._hide_branch(node, arrival, robot)
+                if hide is not None:
+                    steps = []
+                    walk = node_id
+                    while came_from[walk][0] is not None:
+                        previous, key = came_from[walk][0]
+                        branch = self.junctions[previous]['branches'][key]
+                        steps.append({'node': previous, 'exit_dir': key,
+                                      'heading': branch.get('heading', key * math.pi / 2)})
+                        walk = previous
+                    heading = node['branches'][hide].get('heading', hide * math.pi / 2)
+                    steps = steps[::-1] + [{'node': node_id, 'exit_dir': hide,
+                                            'heading': heading}]
+                    return {'distance': cost, 'route': steps, 'hide_node': node_id,
+                            'hide_dir': hide, 'hide_heading': heading}
+            for key, branch in node['branches'].items():
+                link = branch.get('leads_to')
+                if (link is None or branch['status'] == 'BLOCKED' or
+                        (node_id == start['id'] and key == came_by)):
+                    continue  # the corridor where the other robot is
+                nxt = self.junctions.get(link['node'])
+                if nxt is None:
+                    continue
+                step = cost + math.hypot(nxt['x'] - node['x'], nxt['y'] - node['y'])
+                if step < best.get(nxt['id'], math.inf):
+                    best[nxt['id']] = step
+                    came_from[nxt['id']] = ((node_id, key), link['enter_dir'])
+                    heapq.heappush(queue, (step, nxt['id']))
+        return None
+
+    def _hide_branch(self, node, arrival, robot):
+        """Pick the branch to wait in: dead/explored, then new, then claimed."""
+        ranked = []
+        for key, branch in node['branches'].items():
+            if key == arrival or branch.get('hidden_by') not in (None, robot):
+                continue
+            heading = branch.get('heading', key * math.pi / 2)
+            occupied = False
+            for name, pose in self.robots.items():
+                dx, dy = pose['x'] - node['x'], pose['y'] - node['y']
+                if (name != robot and math.hypot(dx, dy) < 0.5 and
+                        abs(math.remainder(math.atan2(dy, dx) - heading, 2 * math.pi))
+                        < math.pi / 4):
+                    occupied = True
+            if occupied:
+                continue
+            owner = branch['owner']
+            claimed = owner not in (None, robot) and owner in self.robots
+            if branch['status'] == 'BLOCKED' or (branch['visited_by'] and not claimed):
+                rank = 0
+            elif not claimed:
+                rank = 1
+            else:
+                rank = 2
+            ranked.append((rank, key))
+        return min(ranked)[1] if ranked else None
+
+    def _open_encounter(self, robot):
+        return next((e for e in self.encounters.values()
+                     if e['state'] != 'CLOSED' and robot in (e['yielder'], e['holder'])),
+                    None)
+
+    def head_on(self, robot, peer, now):
+        """Two robots face each other on one line: order one to hide."""
+        mine, theirs = self._open_encounter(robot), self._open_encounter(peer)
+        if mine is not None and mine is theirs:
+            return []  # already being handled
+        escaping = [r for r, e in ((robot, mine), (peer, theirs))
+                    if e is not None and e['yielder'] == r]
+        if len(escaping) == 2:
+            return []  # both already turning away from this corridor
+        if escaping:
+            # A robot already on its way to hide never turns round again.
+            other = peer if escaping[0] == robot else robot
+            option = self._hide_option(other, escaping[0])
+            return self._start_encounter(other, None, option) if option else []
+        options = {robot: self._hide_option(robot, peer),
+                   peer: self._hide_option(peer, robot)}
+        if options[robot] is None and options[peer] is None:
+            return []
+        if options[robot] is None or options[peer] is None:
+            yielder = robot if options[robot] is not None else peer
+        elif abs(options[robot]['distance'] - options[peer]['distance']) > 0.05:
+            yielder = min(options, key=lambda r: options[r]['distance'])
+        else:
+            # Same as the old rule: the later entrant gives way.
+            yielder = max(options, key=lambda r: (self.robots[r]['route_order'], r))
+        holder = peer if yielder == robot else robot
+        return self._start_encounter(yielder, holder, options[yielder])
+
+    def _start_encounter(self, yielder, holder, option):
+        encounter_id = self.next_encounter_id
+        self.next_encounter_id += 1
+        self.encounters[encounter_id] = {
+            'id': encounter_id, 'yielder': yielder, 'holder': holder,
+            'state': 'ESCAPING', 'hide_node': option['hide_node'],
+            'hide_dir': option['hide_dir'], 'holder_trail': None}
+        orders = [{'type': 'YIELD', 'robot': yielder, 'encounter': encounter_id,
+                   'route': option['route'], 'hide_node': option['hide_node'],
+                   'hide_dir': option['hide_dir'],
+                   'hide_heading': option['hide_heading']}]
+        if holder is not None:
+            orders.append({'type': 'HOLD', 'robot': holder, 'encounter': encounter_id})
+        return orders
+
+    def hidden(self, robot):
+        """Let the holder go once the yielder is parked in its branch."""
+        encounter = next((e for e in self.encounters.values()
+                          if e['state'] == 'ESCAPING' and e['yielder'] == robot), None)
+        if encounter is None:
+            return []
+        encounter['state'] = 'HIDDEN'
+        node = self.junctions[encounter['hide_node']]
+        self._branch(node, encounter['hide_dir'])['hidden_by'] = robot
+        self.trails[robot] = (node['id'], encounter['hide_dir'])
+        holder = encounter['holder']
+        if holder is None:
+            encounter['holder_trail'] = None
+            return []
+        encounter['holder_trail'] = self.trails.get(holder)
+        return [{'type': 'GO', 'robot': holder, 'encounter': encounter['id']}]
+
+    def check_clear(self, now):
+        """Release hidden robots once the robot they waited for is past."""
+        orders = []
+        for encounter in self.encounters.values():
+            if encounter['state'] != 'HIDDEN':
+                continue
+            node = self.junctions[encounter['hide_node']]
+            holder = encounter['holder']
+            if holder is not None and self._live(holder, now):
+                pose = self.robots[holder]
+                if (self.trails.get(holder) == encounter['holder_trail'] or
+                        math.hypot(pose['x'] - node['x'], pose['y'] - node['y']) <= 0.3):
+                    continue
+            branch = node['branches'].get(encounter['hide_dir'])
+            if branch is not None:
+                branch['hidden_by'] = None
+            encounter['state'] = 'CLOSED'
+            orders.append({'type': 'CLEAR', 'robot': encounter['yielder'],
+                           'encounter': encounter['id']})
+        return orders
+
+    def release_branch(self, report, now):
+        """Give a corridor up to the teammate met head-on inside it."""
+        robot = report['robot']
+        node = self.junctions.get(int(report['junction_id']))
+        if node is None:
+            return
+        key = int(report['direction'])
+        branch = node['branches'].get(key)
+        if branch is not None and branch['owner'] == robot:
+            branch['owner'] = None  # a teammate's shared claim stays theirs
+            if branch['status'] != 'BLOCKED':
+                branch['status'] = 'OPEN'  # visited_by stays: it is being explored
+        peer = report.get('peer')
+        self.avoid.setdefault(robot, {})[(node['id'], key)] = {
+            'peer': peer, 'peer_trail': self.trails.get(peer), 'until': now + 60.0}
+
+    def _avoided(self, robot, node_id, key, now):
+        entry = self.avoid.get(robot, {}).get((node_id, key))
+        if entry is None:
+            return False
+        if now > entry['until'] or self.trails.get(entry['peer']) != entry['peer_trail']:
+            del self.avoid[robot][(node_id, key)]  # the teammate has moved on
+            return False
+        return True
+
+    def _likely_known(self, node, key):
+        """Tell whether a new arm points straight at a mapped node's open arm."""
+        branch = node['branches'][key]
+        if branch.get('leads_to') is not None:
+            return False
+        heading = branch.get('heading', key * math.pi / 2)
+        back = direction_key(heading + math.pi)
+        for other in self.junctions.values():
+            if other['id'] == node['id'] or other['kind'] == 'START':
+                continue
+            dx, dy = other['x'] - node['x'], other['y'] - node['y']
+            along = dx * math.cos(heading) + dy * math.sin(heading)
+            lateral = abs(-dx * math.sin(heading) + dy * math.cos(heading))
+            facing = other['branches'].get(back)
+            if (0.0 < along <= 1.0 and lateral <= 0.10 and facing is not None
+                    and facing.get('leads_to') is None):
+                return True
+        return False
+
+    def _has_new_branch(self, node, robot, now):
+        if node['kind'] != 'JUNCTION':
+            return False
+        for key, branch in node['branches'].items():
+            owner = branch['owner']
+            busy = owner not in (None, robot) and self._live(owner, now)
+            if (branch['status'] != 'BLOCKED' and not branch['visited_by'] and not busy
+                    and branch.get('hidden_by') is None
+                    and not self._likely_known(node, key)):
+                return True
+        return False
+
+    def _graph_distances(self, sources, robot, now):
+        """Map distance from every node to the nearest of sources."""
+        best = {source: 0.0 for source in sources}
+        queue = [(0.0, source) for source in sources]
+        heapq.heapify(queue)
+        while queue:
+            cost, node_id = heapq.heappop(queue)
+            if cost > best[node_id]:
+                continue
+            node = self.junctions[node_id]
+            for key, branch in node['branches'].items():
+                link = branch.get('leads_to')
+                if (link is None or branch['status'] == 'BLOCKED'
+                        or self._avoided(robot, node_id, key, now)):
+                    continue
+                other = self.junctions.get(link['node'])
+                if other is None:
+                    continue
+                step = cost + math.hypot(other['x'] - node['x'], other['y'] - node['y'])
+                if step < best.get(other['id'], math.inf):
+                    best[other['id']] = step
+                    heapq.heappush(queue, (step, other['id']))
+        return best
+
+    def _distance_via(self, node, branch, reach):
+        """Length of this branch plus the mapped distance beyond it."""
+        link = branch.get('leads_to')
+        other = self.junctions.get(link['node']) if link else None
+        if other is None or other['id'] not in reach:
+            return math.inf
+        return (math.hypot(other['x'] - node['x'], other['y'] - node['y'])
+                + reach[other['id']])
+
     def cancel_branch(self, report):
         """Release a junction choice when its robot has to yield before moving."""
         token = (report['robot'], report['request_id'])
@@ -366,7 +650,8 @@ class TeamLedger:
                        'returning': p['returning'],
                        'yield_to': p['yield_to'],
                        'yield_junction': p['yield_junction'],
-                       'yield_escape_heading': p['yield_escape_heading']}
+                       'yield_escape_heading': p['yield_escape_heading'],
+                       'blocked_behind': p.get('blocked_behind', False)}
                 for name, p in self.robots.items()
                 if now - p['seen_at'] < PEER_TIMEOUT_SECONDS
             },
@@ -390,6 +675,14 @@ class TeamCoordinator(Node):
         self.create_timer(0.5, self._publish_state)
         self.get_logger().info('Team coordinator ready: branch reservations and shared goal')
 
+    def _publish_orders(self, orders):
+        for order in orders:
+            self._publish(self.decision_pub, order)
+            self.get_logger().info(
+                f"{order['type']} -> {order['robot']} (encounter {order['encounter']})")
+        if orders:
+            self._publish_state()
+
     def _publish(self, publisher, payload):
         msg = String()
         msg.data = json.dumps(payload, ensure_ascii=False)
@@ -402,6 +695,15 @@ class TeamCoordinator(Node):
             now = time.monotonic()
             if kind == 'POSE':
                 self.ledger.update_pose(report, now)
+                self._publish_orders(self.ledger.check_clear(now))
+            elif kind == 'HEAD_ON':
+                self._publish_orders(
+                    self.ledger.head_on(report['robot'], report['peer'], now))
+            elif kind == 'HIDDEN':
+                self._publish_orders(self.ledger.hidden(report['robot']))
+            elif kind == 'RELEASE_BRANCH':
+                self.ledger.release_branch(report, now)
+                self._publish_state()
             elif kind == 'BRANCH_REQUEST':
                 result = self.ledger.request_branch(report, now)
                 self._publish(self.decision_pub, {

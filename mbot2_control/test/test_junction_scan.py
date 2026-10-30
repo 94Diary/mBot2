@@ -673,6 +673,277 @@ class BlackJunctionScanTest(unittest.TestCase):
         self.assertEqual([], self.node_reports('CORNER'))
         self.assertEqual(1, len(self.node_reports('DEAD_END')))
 
+    def head_on_setup(self):
+        self.use_team()
+        self.node.head_on_hiding = True  # C4 path
+        self.robot = FloorHarness(self.node, [(-1.0, 0.0, 1.0, 0.0)], self.clock)
+        self.node._change_state(maze_solver.FOLLOW)
+
+    def tick_with_peer_ahead(self, ticks=1):
+        for _ in range(ticks):
+            self.peer(self.node.pose[0] + 0.6, math.pi, maze_solver.RETURNING)
+            self.robot.tick()
+
+    def test_head_on_reports_and_stops(self):
+        self.head_on_setup()
+        self.tick_with_peer_ahead(3)
+        heads = [r for r in self.reports if r.get('type') == 'HEAD_ON']
+        self.assertEqual([{'type': 'HEAD_ON', 'peer': 'mbot0'}], heads)
+        self.assertEqual(0.0, self.robot.sent[-1].linear.x)
+        self.assertNotEqual(maze_solver.YIELDING, self.node.state)
+
+    def test_no_answer_falls_back_to_old_yield(self):
+        self.head_on_setup()
+        self.tick_with_peer_ahead(25)  # 2.5 s without an order
+        self.assertEqual(maze_solver.YIELDING, self.node.state)
+
+    def order(self, kind, **extra):
+        self.node._on_team_order({'type': kind, 'robot': self.node.robot_id,
+                                  'encounter': 1, **extra})
+
+    def test_hold_then_go_resumes(self):
+        self.head_on_setup()
+        self.tick_with_peer_ahead()
+        self.order('HOLD')
+        self.tick_with_peer_ahead(5)
+        self.assertEqual(maze_solver.HOLDING, self.node.state)
+        self.assertEqual(0.0, self.robot.sent[-1].linear.x)
+        self.order('GO')
+        self.node.team_peers = {}
+        self.robot.tick()
+        self.assertEqual(maze_solver.FOLLOW, self.node.state)
+
+    def test_hold_times_out(self):
+        self.head_on_setup()
+        self.order('HOLD')
+        self.robot.tick()
+        self.clock[0] += maze_solver.HOLD_TIMEOUT_SECONDS + 0.5
+        self.robot.read_floor()  # fresh camera frames after the jump
+        self.node.team_peers = {}
+        self.robot.tick()
+        self.assertEqual(maze_solver.FOLLOW, self.node.state)
+
+    # Corridor y=0 from corner C(0,0) east; C turns north to junction H(0,0.5)
+    # whose east arm is free to hide in and whose north arm goes on.
+    CORRIDOR = (0.0, 0.0, 1.0, 0.0)
+    C_TO_H = (0.0, 0.0, 0.0, 0.5)
+    H_EAST = (0.0, 0.5, 0.6, 0.5)
+    H_NORTH = (0.0, 0.5, 0.0, 1.1)
+
+    def escape_setup(self):
+        self.use_team()
+        self.node.head_on_hiding = True  # C4 path
+        self.node.team_nodes = [
+            {'id': 1, 'kind': 'CORNER', 'x': 0.0, 'y': 0.0, 'branches': {
+                '0': {'status': 'OPEN', 'heading': 0.0, 'leads_to': None},
+                '1': {'status': 'OPEN', 'heading': math.pi / 2,
+                      'leads_to': {'node': 2, 'enter_dir': 3}}}},
+            {'id': 2, 'kind': 'JUNCTION', 'x': 0.0, 'y': 0.5, 'branches': {
+                '3': {'status': 'OPEN', 'heading': -math.pi / 2,
+                      'leads_to': {'node': 1, 'enter_dir': 1}},
+                '0': {'status': 'BLOCKED', 'heading': 0.0, 'leads_to': None},
+                '1': {'status': 'OPEN', 'heading': math.pi / 2, 'leads_to': None}}}]
+        self.node._update_pose(0.3, 0.0, 0.0)
+        self.robot = FloorHarness(
+            self.node, [self.CORRIDOR, self.C_TO_H, self.H_EAST, self.H_NORTH],
+            self.clock)
+        self.node._change_state(maze_solver.FOLLOW)
+        self.robot.tick()
+        self.order('YIELD', route=[
+            {'node': 1, 'exit_dir': 1, 'heading': math.pi / 2},
+            {'node': 2, 'exit_dir': 0, 'heading': 0.0}],
+            hide_node=2, hide_dir=0, hide_heading=0.0)
+
+    def run_until(self, done, ticks=800):
+        for _ in range(ticks):
+            if done():
+                return
+            self.robot.tick()
+        self.fail(f'stuck in {self.node.state}')
+
+    def test_yield_turns_round_follows_route_and_hides(self):
+        self.escape_setup()
+        self.run_until(lambda: self.node.state == maze_solver.YIELD_WAIT)
+        types = [r.get('type') for r in self.reports]
+        self.assertEqual(1, types.count('HIDDEN'))
+        self.assertNotIn('BRANCH_REQUEST', types)
+        self.assertNotIn('NODE', types)
+        ax, ay = self.node._axle_point(self.node.pose)
+        self.assertAlmostEqual(maze_solver.HIDE_DEPTH_M, ax, delta=0.03)
+        self.assertAlmostEqual(0.5, ay, delta=0.03)
+
+    def test_clear_backs_out_and_asks_without_hide_branch(self):
+        self.escape_setup()
+        self.run_until(lambda: self.node.state == maze_solver.YIELD_WAIT)
+        self.order('CLEAR')
+        self.run_until(lambda: self.node.state == maze_solver.JUNCTION_PAUSE)
+        ax, ay = self.node._axle_point(self.node.pose)
+        self.assertLess(math.hypot(ax, ay - 0.5), 0.03)
+        headings = [c['heading'] for c in self.branch_requests()[-1]['choices']]
+        self.assertFalse(any(abs(maze_solver.angle_difference(h, 0.0)) < 0.3
+                             for h in headings))
+
+    def turn_back_setup(self, peer_state=maze_solver.RETURNING, peer_heading=math.pi,
+                        gap=0.6):
+        self.use_team()
+        self.robot = FloorHarness(self.node, [(-1.0, 0.0, 1.0, 0.0)], self.clock)
+        self.node._change_state(maze_solver.FOLLOW)
+        self.gap, self.peer_state, self.peer_heading = gap, peer_state, peer_heading
+
+    def tick_turn_back(self, ticks):
+        start_x = self.node.pose[0]
+        for _ in range(ticks):
+            self.peer(start_x + self.gap, self.peer_heading, self.peer_state)
+            self.robot.tick()
+
+    def test_later_robot_turns_back(self):
+        self.turn_back_setup()
+        branch = {'junction_id': 3, 'direction': 0, 'choice': 'straight',
+                  'request_id': 'r1', 'previous_route_order': None}
+        self.node.active_team_branch = dict(branch)
+        self.tick_turn_back(80)
+        self.assertIn({'type': 'RELEASE_BRANCH', **branch, 'peer': 'mbot0'}, self.reports)
+        self.assertNotIn('BLOCKED', [r.get('type') for r in self.reports])
+        self.assertTrue(self.node.returning)
+        self.assertAlmostEqual(0.0, maze_solver.angle_difference(
+            self.node.pose[2], math.pi), delta=0.3)
+        self.assertFalse(any(c.linear.x < -0.01 for c in self.robot.sent))
+
+    def test_earlier_robot_waits(self):
+        self.turn_back_setup(gap=0.3)
+        self.node.team_route_order = 1  # entered first: mbot0 has order 0? no
+        self.node.team_peers = {}
+        self.node.ultrasonic.distance_m = 0.2
+        for _ in range(20):
+            self.node.team_peers = {'mbot0': {
+                'x': self.node.pose[0] + 0.3, 'y': 0.0, 'heading': math.pi,
+                'state': maze_solver.RETURNING, 'route_order': 5}}
+            self.robot.tick()
+        self.assertEqual(maze_solver.FOLLOW, self.node.state)
+        self.assertEqual(0.0, self.robot.sent[-1].linear.x)
+        self.assertNotIn('RELEASE_BRANCH', [r.get('type') for r in self.reports])
+
+    def test_lost_peer_ahead_waits(self):
+        self.turn_back_setup(peer_state=maze_solver.LINE_LOST, peer_heading=0.0, gap=0.3)
+        self.node.ultrasonic.distance_m = 0.2
+        self.tick_turn_back(20)
+        self.assertNotIn(self.node.state, (maze_solver.YIELDING, maze_solver.TURNING))
+        self.assertFalse(any(c.linear.x < -0.01 for c in self.robot.sent))
+
+    def test_returning_robot_turns_back_into_follow(self):
+        self.turn_back_setup()
+        # Both on their way back: the later one turns and explores on.
+        self.node.returning = True
+        self.node._change_state(maze_solver.RETURNING)
+        start_x = self.node.pose[0]
+        for _ in range(80):
+            self.peer(start_x + self.gap, self.peer_heading, self.peer_state)
+            self.node.team_peers['mbot0']['returning'] = True
+            self.robot.tick()
+            if (self.node.state == maze_solver.FOLLOW
+                    and abs(maze_solver.angle_difference(self.node.pose[2], math.pi)) < 0.3):
+                break
+        self.assertFalse(self.node.returning)
+        self.assertEqual(maze_solver.FOLLOW, self.node.state)
+
+    def test_robot_parked_at_goal_is_not_head_on(self):
+        # A teammate waiting at the goal faces any way; walk up and stop.
+        self.use_team()
+        self.peer(0.6, math.pi, maze_solver.GOAL_REACHED)
+        self.assertIsNone(self.node._head_on_peer())
+
+    def test_stuck_peer_ahead_makes_robot_turn_back(self):
+        # The teammate ahead lost its line and never moves again.
+        self.turn_back_setup(peer_state=maze_solver.LINE_LOST, peer_heading=0.0, gap=0.3)
+        self.node.ultrasonic.distance_m = 0.2
+        ticks = int(maze_solver.PEER_WAIT_TURN_BACK_SECONDS * 10) + 20
+        self.tick_turn_back(ticks)
+        self.assertIn(self.node.state, (maze_solver.TURNING, maze_solver.REACQUIRE,
+                                        maze_solver.ALIGN_LINE, maze_solver.RETURNING))
+        self.assertFalse(any(c.linear.x < -0.01 for c in self.robot.sent))
+
+    def test_returning_robot_never_turns_back(self):
+        # mbot0 has priority by order, but this robot is on its way back
+        # from a dead end: the one heading into the corridor turns instead.
+        self.turn_back_setup()
+        self.node.returning = True
+        self.node._change_state(maze_solver.RETURNING)
+        self.tick_turn_back(5)
+        self.assertNotIn('RELEASE_BRANCH', [r.get('type') for r in self.reports])
+        self.assertNotEqual(maze_solver.TURNING, self.node.state)
+
+    def test_robot_turns_back_for_returning_peer_without_priority(self):
+        self.turn_back_setup()
+        self.node.team_route_order = 0
+        for _ in range(5):
+            self.node.team_peers = {'mbot0': {
+                'x': self.node.pose[0] + 0.6, 'y': 0.0, 'heading': math.pi,
+                'state': maze_solver.RETURNING, 'route_order': 9, 'returning': True}}
+            self.robot.tick()
+        self.assertIn(self.node.state, (maze_solver.TURNING,))
+
+    def test_no_turn_back_with_teammate_close_behind(self):
+        self.turn_back_setup()
+        for _ in range(5):
+            self.node.team_peers = {
+                'mbot0': {'x': self.node.pose[0] + 0.6, 'y': 0.0, 'heading': math.pi,
+                          'state': maze_solver.RETURNING, 'route_order': 0},
+                'mbot9': {'x': self.node.pose[0] - 0.3, 'y': 0.0, 'heading': 0.0,
+                          'state': maze_solver.FOLLOW, 'route_order': 9}}
+            self.robot.tick()
+        self.assertNotEqual(maze_solver.TURNING, self.node.state)
+        self.assertTrue(self.reports[-1].get('blocked_behind', False) or any(
+            r.get('blocked_behind') for r in self.reports if r.get('type') == 'POSE'))
+
+    def test_turns_back_for_peer_blocked_behind(self):
+        self.turn_back_setup()
+        self.node.team_route_order = 0
+        for _ in range(5):
+            self.node.team_peers = {'mbot0': {
+                'x': self.node.pose[0] + 0.6, 'y': 0.0, 'heading': math.pi,
+                'state': maze_solver.FOLLOW, 'route_order': 9, 'blocked_behind': True}}
+            self.robot.tick()
+        self.assertEqual(maze_solver.TURNING, self.node.state)
+
+    def test_wall_with_teammate_behind_turns_without_reversing(self):
+        self.use_team()
+        self.robot = FloorHarness(self.node, [(-1.0, 0.0, 1.0, 0.0)], self.clock)
+        self.node._change_state(maze_solver.FOLLOW)
+        self.node.ultrasonic.distance_m = 0.2
+        self.node.team_peers = {'mbot9': {
+            'x': -0.3, 'y': 0.0, 'heading': 0.0, 'state': maze_solver.FOLLOW,
+            'route_order': 9}}
+        self.robot.tick()
+        self.assertNotEqual(maze_solver.REVERSING, self.node.state)
+        self.assertFalse(any(c.linear.x < -0.01 for c in self.robot.sent))
+
+    def test_turn_back_while_centring_cancels_the_fresh_choice(self):
+        self.use_team()
+        self.robot = FloorHarness(self.node, [(-1.0, 0.0, 1.0, 0.0)], self.clock)
+        self.node.active_team_branch = {
+            'junction_id': 4, 'direction': 1, 'choice': 'left', 'request_id': 'r9',
+            'previous_route_order': 3}
+        self.node.center_start = self.node.pose[:2]
+        self.node.center_heading = 0.0
+        self.node._change_state(maze_solver.CENTERING)
+        self.node.junction_needs_request = True
+        self.node._begin_turn_back('mbot0')  # not asked yet: still in its corridor
+        self.assertFalse(self.node.junction_needs_request)
+        self.node.junction_needs_request = False
+        self.node.active_team_branch = {
+            'junction_id': 4, 'direction': 1, 'choice': 'left', 'request_id': 'r9',
+            'previous_route_order': 3}
+        self.node._change_state(maze_solver.CENTERING)
+        self.node._begin_turn_back('mbot0')
+        self.assertIn({'type': 'CANCEL_BRANCH', 'request_id': 'r9'}, self.reports)
+        self.assertEqual(3, self.node.team_route_order)
+
+    def test_robot_parked_at_goal_never_triggers_turn_back(self):
+        self.turn_back_setup(peer_state=maze_solver.GOAL_REACHED, gap=0.3)
+        self.node.ultrasonic.distance_m = 0.2
+        self.tick_turn_back(5)
+        self.assertNotEqual(maze_solver.TURNING, self.node.state)
+
 
 if __name__ == '__main__':
     unittest.main()
