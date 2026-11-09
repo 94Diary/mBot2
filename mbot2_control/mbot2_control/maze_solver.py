@@ -24,7 +24,7 @@ APPROACH_SPEED = 0.14
 RETURN_SPEED = 0.22
 JUNCTION_RETURN_SPEED = 0.10
 SEARCH_SPEED = 0.12
-SEARCH_MAX_M = 0.25
+SEARCH_MAX_M = 0.45  # enough to leave the blue start area and reach the line
 REVERSE_SPEED = 0.15
 REVERSE_SECONDS = 1.5
 OBSTACLE_STOP_DISTANCE_M = 0.25
@@ -37,15 +37,15 @@ HEAD_ON_DETECT_M = 1.20
 HEAD_ON_HEADING_RAD = 2.2
 YIELD_LINE_TURN_GAIN = 0.35
 YIELD_HEADING_GAIN = 0.8
-TEAM_GOAL_RADIUS_M = 0.55
-TEAM_ASSEMBLY_RADIUS_M = 1.45
+GOAL_PARK_GAP_M = 0.10  # queue this close behind a teammate inside the goal area
+GOAL_PARK_ENTRY_M = 0.15  # drive at least this far in before a missing line means "end"
 
 TURN_GAIN = 0.15
 MAX_TURN = 0.5
 LINE_CORRECTION_SPEED = 0.18
 LINE_CORRECTION_GAIN = 0.65
 LINE_CORRECTION_MAX_TURN = 1.2
-ROTATE_SPEED = 0.85
+ROTATE_SPEED = 1.2  # ~7 deg per 10 Hz tick: still lands inside the ±4 deg turn window
 TURN_TOLERANCE_RAD = 0.07
 ALIGN_SPEED = 0.07              # เดินช้าเฉพาะเมื่อเซนเซอร์ในเริ่มเห็นเส้นแล้ว
 ALIGN_TURN_GAIN = 0.50
@@ -53,9 +53,10 @@ ALIGN_MAX_TURN = 0.75
 ALIGN_LOST_GRACE_SECONDS = 0.6
 BRANCH_CAPTURE_SPEED = 0.16
 BRANCH_CAPTURE_IGNORE_M = 0.03
-BRANCH_CAPTURE_MAX_M = 0.35
+BRANCH_CAPTURE_MAX_M = 0.24
 PATH_COLOR_GRACE_M = 0.08
 YIELD_PATH_GAP_M = 0.35  # front RGB can cross a broad junction while reversing
+YIELD_LINE_END_M = 0.03  # black maze: two reversing ticks without black
 ANCHOR_ARRIVAL_M = 0.015  # RGB footprint is only centimetres wide
 ANCHOR_TRAVEL_SPEED = 0.10
 ANCHOR_TURN_SPEED = 0.65
@@ -67,6 +68,7 @@ JUNCTION_PAUSE_SECONDS = 1.0
 
 # Front RGB sensor is ~8.5 cm ahead of the base centre in the robot description.
 RGB_FRONT_OFFSET_M = 0.085
+WHEEL_X_OFFSET_M = -0.015  # wheel axle behind base_link: the pivot when turning in place
 JUNCTION_SLOW_RADIUS_M = 0.55
 JUNCTION_LATERAL_TOLERANCE_M = 0.15
 JUNCTION_ESCAPE_DISTANCE_M = 0.16  # พ้นปื้นเหลืองตรงกลางก่อนตรวจแยกใหม่
@@ -74,11 +76,30 @@ JUNCTION_APPROACH_MAX_M = 0.40  # yellow warning stripe starts 0.25 m before J
 JUNCTION_APPROACH_ABORT_M = 0.48
 RETURN_MARKER_RADIUS_M = 0.10
 TRAIL_UPDATE_SECONDS = 1.0
+# junction_color='black': stop on an outer-sensor hit, then sweep in place.
+SCAN_LIMIT_RAD = math.radians(130)
+SCAN_STRAIGHT_MAX_RAD = math.radians(40)  # |θ| ≤ 40° is the straight arm
+SCAN_SIDE_MIN_RAD = math.radians(50)      # 50°..130° is a side arm
+CENTER_TOLERANCE_M = 0.02
+LOOKAHEAD_M = 0.40             # ask the team this far before a known junction
+KNOWN_NODE_RADIUS_M = 0.10      # pivot is within ~2 cm of a real node
+TEAM_MAP_FRESH_SECONDS = 1.0    # state arrives every 0.5 s
+HEAD_ON_DECISION_SECONDS = 2.0  # wait this long for the team's hide order
+HEAD_ON_FALLBACK_SECONDS = 5.0  # then use the old rule for this peer
+START_LEADER_AHEAD_M = 1.0     # robot in front in the start box
+START_LEADER_SIDE_M = 0.15
+START_GATE_TIMEOUT_SECONDS = 60.0  # wall clock: the sim runs at ~1/3 speed
+CLEAR_AHEAD_M = 0.40            # stop for a teammate this close in front
+CLEAR_SIDE_M = 0.25
+PEER_WAIT_TURN_BACK_SECONDS = 15.0  # stuck behind a teammate: go elsewhere
+HOLD_TIMEOUT_SECONDS = 60.0     # wall clock: the sim runs at ~1/3 speed
+HIDE_DEPTH_M = 0.25             # wheels this far into the hiding branch
 
 SEARCH = 'SEARCH'
 FOLLOW = 'FOLLOW'
 APPROACH_JUNCTION = 'APPROACH_JUNCTION'
 JUNCTION_PAUSE = 'JUNCTION_PAUSE'
+JUNCTION_SCAN = 'JUNCTION_SCAN'
 CENTERING = 'CENTERING'
 BRANCH_CAPTURE = 'BRANCH_CAPTURE'
 TURNING = 'TURNING'
@@ -93,6 +114,12 @@ YIELD_TURN = 'YIELD_TURN'
 YIELD_ESCAPE = 'YIELD_ESCAPE'
 YIELD_WAIT = 'YIELD_WAIT'
 GOAL_REACHED = 'GOAL_REACHED'
+HOLDING = 'HOLDING'  # stopped by the team while a teammate hides
+GOAL_PARKING = 'GOAL_PARKING'  # inside the red goal area, driving in to park
+# A peer stopped or turning on the spot at a junction points anywhere (a
+# scan ends at -130 deg); its heading says nothing about whether it is
+# coming back down this corridor.
+PIVOTING_STATES = (CENTERING, JUNCTION_SCAN, JUNCTION_PAUSE, TURNING)
 
 
 def angle_difference(target, current):
@@ -102,16 +129,23 @@ def angle_difference(target, current):
 
 class MazeSolver(Node):
 
-    def __init__(self):
-        super().__init__('maze_solver')
+    def __init__(self, **kwargs):
+        super().__init__('maze_solver', **kwargs)
         self.declare_parameter('junction_choice', 'side_first')
         self.declare_parameter('team_enabled', False)
         self.declare_parameter('use_ground_truth', False)
+        self.declare_parameter('world_name', 'simple_branch_maze')
         self.declare_parameter('spawn_x', 0.0)
         self.declare_parameter('spawn_y', 0.0)
         self.declare_parameter('spawn_yaw', 0.0)
+        self.declare_parameter('junction_color', 'yellow')
+        self.declare_parameter('goal_color', 'green')
+        # True: C4 (team arbitrates, loser hides in a side branch).
+        # False: the robot without priority turns round and drives back.
+        self.declare_parameter('head_on_hiding', False)
         self.team_enabled = bool(self.get_parameter('team_enabled').value)
         self.use_ground_truth = bool(self.get_parameter('use_ground_truth').value)
+        self.head_on_hiding = bool(self.get_parameter('head_on_hiding').value)
         self.spawn_pose = (
             float(self.get_parameter('spawn_x').value),
             float(self.get_parameter('spawn_y').value),
@@ -127,6 +161,25 @@ class MazeSolver(Node):
         self.active_junction_world = None
         self.team_goal = None
         self.team_peers = {}
+        self.team_nodes = []  # shared map from /maze_team/state
+        self.head_on_wait = None  # {'peer', 'since'} while the team decides
+        self.head_on_fallback_until = {}
+        self.peer_wait = None  # {'peer', 'since'} while stopped behind a teammate
+        self.start_leader = None  # robot in front in the start box
+        self.start_gate_open = False
+        self.start_gate_since = 0.0
+        self.clearance_peer = None  # {'peer', 'since'} while stopped for a teammate
+        self.goal_reported = False
+        self.ahead_request = None  # {'node', 'request_id'}: asked before arriving
+        self.await_ahead_choice = False
+        self.park_start_distance = 0.0
+        self.park_heading = 0.0
+        self.team_encounter = None
+        self.hold_resume_state = FOLLOW
+        self.route_steps = []         # [{'node', 'exit_dir', 'heading'}, ...]
+        self.route_after = FOLLOW     # state to drive in between route steps
+        self.escape = None            # the YIELD order being carried out
+        self.escape_cleared = False
         self.team_route_order = None
         self.team_route_order_local = False
         self.last_team_pose_at = 0.0
@@ -162,12 +215,16 @@ class MazeSolver(Node):
         self.trail_pub = self.create_publisher(String, 'trail', 10)
         self.create_subscription(Odometry, 'odom', self._on_odom, 10)
         if self.use_ground_truth:
+            world_name = str(self.get_parameter('world_name').value)
             self.create_subscription(
-                TFMessage, '/world/simple_branch_maze/dynamic_pose/info',
+                TFMessage, f'/world/{world_name}/dynamic_pose/info',
                 self._on_ground_truth, 10)
         self.timer = self.create_timer(0.1, self.tick)
 
         self.sensors = QuadRGBArray(self)
+        self.black_mode = self.sensors.junction_color == 'black'
+        if self.black_mode:
+            self.sensors.on_outer_hit = self._on_outer_hit
         self.ultrasonic = UltrasonicSensor(self)
         self.encoder = WheelEncoder(self)
 
@@ -194,6 +251,23 @@ class MazeSolver(Node):
         self.junction_entry_pose = None
         self.junction_candidate = None
         self.junction_candidate_ticks = 0
+        self.junction_needs_request = False
+        self.outer_hit_position = None  # local sensor point of a black-mode hit
+        self.outer_hit_world = None
+        self.outer_hit_sides = set()  # 'left' (sensor 1) / 'right' (sensor 4)
+        self.scan_sides = set()
+        self.scan_from_line_end = False
+        self.scan_hit_world = None
+        self.trigger_resume_distance = 0.0
+        self.scan_pending = False
+        self.center_on_axle = False  # black mode: pivot where the scan pivoted
+        self.scan_pivot = None
+        self.scan_pivot_world = None
+        self.scan_returning = False
+        self.center_target = None
+        self.scan_heading = None
+        self.scan_phases = []
+        self.scan_hits = {}
         self.line_search_after = FOLLOW
         self.last_search_log_at = 0.0
         self.align_last_black_at = 0.0
@@ -202,10 +276,14 @@ class MazeSolver(Node):
         self.last_centered_pose = None
         self.last_path_color_distance = 0.0
         self.yield_line_missing_logged = False
-        self.yield_scan_direction = 1
+        self.yield_at_line_end = False
         self.line_lost_anchor = None
         self.line_lost_phase = None
         self.line_lost_turn_direction = 1
+        self.scan_rotation = 0.0
+        self.scan_last_yaw = 0.0
+        self.scan_saw_black = False
+        self.line_search_given_up = False
         self.trail_id = 0
         self.trail_start_distance = 0.0
         self.last_trail_update = 0.0
@@ -277,6 +355,10 @@ class MazeSolver(Node):
             decision = json.loads(msg.data)
         except (ValueError, TypeError):
             return
+        if decision.get('type') is not None:
+            if decision.get('robot') == self.robot_id:
+                self._on_team_order(decision)
+            return
         pending = self.pending_team_request
         if (pending is not None and decision.get('robot') == self.robot_id
                 and decision.get('request_id') == pending['request_id']):
@@ -285,10 +367,175 @@ class MazeSolver(Node):
                 f"ทีมจัดทางแยก J{decision.get('junction_id')}: "
                 f"{decision.get('choice')} (ร่วมทาง={decision.get('shared', False)})")
 
+    def _on_team_order(self, order):
+        """Head-on orders from the team: YIELD, HOLD, GO or CLEAR."""
+        kind = order['type']
+        self.head_on_wait = None
+        if kind == 'YIELD':
+            self._begin_escape(order)
+        elif kind == 'HOLD':
+            self.team_encounter = order
+            self.hold_resume_state = RETURNING if self.returning else FOLLOW
+            self.get_logger().info('ทีมสั่งให้รอ: เพื่อนกำลังหลบเข้ากิ่งข้าง')
+            self._change_state(HOLDING)
+        elif kind == 'GO' and self.state == HOLDING:
+            self.get_logger().info('ทีมให้ไปต่อได้')
+            self.team_encounter = None
+            self._change_state(self.hold_resume_state)
+        elif kind == 'CLEAR':
+            self.escape_cleared = True
+        elif kind == 'GOAL_ROUTE':
+            if (order.get('turn_back') and not self.returning and self.state in
+                    (FOLLOW, APPROACH_JUNCTION, BRANCH_CAPTURE, ALIGN_LINE)):
+                self.get_logger().info('ทีมเจอเป้าหมายแล้ว และทางกลับใกล้กว่า: กลับตัวไปเป้าหมาย')
+                self._begin_turn_back(None)
+
+    def _on_head_on(self, name, peer):
+        """Ask the team who hides; True while this robot must stay put."""
+        now = time.monotonic()
+        if self.head_on_fallback_until.get(name, 0.0) <= now:
+            if self.head_on_wait is None or self.head_on_wait['peer'] != name:
+                self.head_on_wait = {'peer': name, 'since': now}
+                self._team_report({'type': 'HEAD_ON', 'peer': name})
+            if now - self.head_on_wait['since'] < HEAD_ON_DECISION_SECONDS:
+                return True
+            self.get_logger().warning('ทีมไม่ตอบเรื่องหุ่นสวนกัน: ใช้กฎลำดับเดิม')
+            self.head_on_wait = None
+            self.head_on_fallback_until[name] = now + HEAD_ON_FALLBACK_SECONDS
+        if self._peer_has_priority(name, peer):
+            self._begin_yield(name)
+            return True
+        return False
+
+    def _should_turn_back(self, name, peer):
+        """Decide which of two robots meeting head-on turns round (both agree)."""
+        mine = self._peer_behind_close()
+        theirs = bool(peer.get('blocked_behind', False))
+        if mine != theirs:
+            return theirs  # the one with a teammate on its tail cannot turn
+        mine, theirs = self.returning, bool(peer.get('returning', False))
+        if mine != theirs:
+            return theirs  # one is leaving a dead end: the other gives way
+        return self._peer_has_priority(name, peer)
+
+    def _begin_turn_back(self, peer):
+        """Meeting a teammate head-on: it already explores this corridor."""
+        if self._peer_behind_close():
+            return  # turning would swing into the teammate behind; wait
+        if (self.state == CENTERING and not self.junction_needs_request
+                and not self.scan_pending and not self.await_ahead_choice
+                and self.active_team_branch is not None):
+            # The branch was chosen at this junction but not entered yet.
+            self._team_report({'type': 'CANCEL_BRANCH',
+                               'request_id': self.active_team_branch['request_id']})
+            self.team_route_order = self.active_team_branch['previous_route_order']
+            self.team_route_order_local = self.team_route_order is not None
+            self.active_team_branch = None
+        elif self.active_team_branch is not None:
+            self._team_report({'type': 'RELEASE_BRANCH', **self.active_team_branch,
+                               'peer': peer})
+            self.active_team_branch = None
+        if self.pending_team_request is not None:
+            self._team_report({'type': 'CANCEL_BRANCH',
+                               'request_id': self.pending_team_request['request_id']})
+            self.pending_team_request = None
+            self.team_choice = None
+        self.ahead_request = None
+        self.await_ahead_choice = False
+        self.junction_needs_request = False
+        self.scan_pending = False
+        self.center_on_axle = False
+        if peer is not None:
+            self.get_logger().info(f'กลับตัวให้ {peer}: ทางนี้มีเพื่อนสำรวจอยู่แล้ว')
+        if self.returning:
+            # Heading back already: turn round and explore on, asking anew.
+            self.returning = False
+            self._start_turn(math.pi, FOLLOW, 'CORNER')
+        else:
+            self._start_turn(math.pi, RETURNING, 'UTURN')
+
+    def _begin_escape(self, order):
+        """Turn round and drive the team's route to a branch to hide in."""
+        self.team_encounter = order
+        self.escape = {'hide_node': order['hide_node'], 'hide_dir': order['hide_dir'],
+                       'hide_heading': float(order['hide_heading']),
+                       'hiding': False, 'hide_center': None}
+        self.escape_cleared = False
+        self.route_steps = list(order['route'])
+        self.route_after = YIELD_ESCAPE
+        self.turn_target = self.pose[2] + math.pi
+        self.get_logger().info(
+            f"ทีมให้หลบ: กลับหัวแล้วไปหลบที่ J{order['hide_node']}")
+        self._change_state(YIELD_TURN)
+
+    def _follow_route_step(self, node):
+        """At the next node of the route, turn onto its exit; False otherwise."""
+        if not self.route_steps or self.route_steps[0]['node'] != node['id']:
+            return False
+        step = self.route_steps.pop(0)
+        world_yaw = self._world_pose()[2]
+        self.trigger_resume_distance = self.distance_total + JUNCTION_ESCAPE_DISTANCE_M
+        if not self.route_steps and self.escape is not None:
+            self.escape['hiding'] = True
+            self.escape['hide_center'] = self._axle_point(self._world_pose())
+        self._start_turn(angle_difference(float(step['heading']), world_yaw),
+                         self.route_after, 'ROUTE')
+        return True
+
+    def _hide_depth(self):
+        """How far the axle is along the hiding branch from its junction."""
+        ax, ay = self._axle_point(self._world_pose())
+        hx, hy = self.escape['hide_center']
+        heading = self.escape['hide_heading']
+        return (ax - hx) * math.cos(heading) + (ay - hy) * math.sin(heading)
+
+    def _resume_after_hiding(self):
+        """Back at the hiding junction's centre: ask the team as usual."""
+        escape = self.escape
+        hx, hy = escape['hide_center']
+        node = next((n for n in self.team_nodes if n['id'] == escape['hide_node']), None)
+        approach = escape['hide_heading'] + math.pi
+        self.scan_hits = {'straight': [], 'left': [], 'right': []}
+        for key, branch in (node or {'branches': {}})['branches'].items():
+            if int(key) == escape['hide_dir']:
+                continue
+            heading = branch.get('heading', int(key) * math.pi / 2)
+            self._bin_scan_angle(angle_difference(heading, approach))
+        exits = {name: approach + sum(angles) / len(angles)
+                 for name, angles in self.scan_hits.items() if angles}
+        local_approach = self.pose[2] + angle_difference(approach, self._world_pose()[2])
+        index = next((i for i in range(len(self.junctions) - 1, -1, -1)
+                      if math.hypot(self.junctions[i]['world_position'][0] - hx,
+                                    self.junctions[i]['world_position'][1] - hy) <= 0.25),
+                     None)
+        if index is None:
+            self.junction_count += 1
+            self.junctions.append({'id': self.junction_count})
+        else:
+            self.junctions = self.junctions[:index + 1]
+        self.junctions[-1].update({
+            'position': self._axle_point(self.pose), 'world_position': (hx, hy),
+            'heading': local_approach, 'world_heading': approach,
+            'left_open': 'left' in exits, 'right_open': 'right' in exits,
+            'straight_open': 'straight' in exits, 'exit_headings': exits})
+        self.active_junction_world = (hx, hy)
+        self.returning = False
+        self.escape = None
+        self.team_encounter = None
+        self.escape_cleared = False
+        self.route_steps = []
+        self.get_logger().info('เพื่อนผ่านแล้ว: ออกจากที่หลบและขอทางจากทีม')
+        self._request_team_branch(
+            False, 'left' in exits, 'right' in exits, (hx, hy),
+            straight_open='straight' in exits, approach_heading=approach,
+            exit_headings=exits, offer_back=False)  # back = the hiding branch
+        self._change_state(JUNCTION_PAUSE)
+
     def _on_team_state(self, msg):
         try:
             data = json.loads(msg.data)
             self.team_goal = data.get('goal')
+            self.team_nodes = data.get('junctions', [])
             self.team_peers = {
                 name: position for name, position in data.get('robots', {}).items()
                 if name != self.robot_id
@@ -314,6 +561,63 @@ class MazeSolver(Node):
                 if closest is None or forward < closest[2]:
                     closest = (name, peer, forward)
         return closest
+
+    @staticmethod
+    def _in_front(pose, x, y, ahead, side):
+        dx, dy = x - pose[0], y - pose[1]
+        forward = dx * math.cos(pose[2]) + dy * math.sin(pose[2])
+        lateral = abs(-dx * math.sin(pose[2]) + dy * math.cos(pose[2]))
+        return 0.0 < forward < ahead and lateral < side
+
+    def _start_gate_closed(self):
+        """Leave the start box only once the robot in front reached a junction."""
+        if not self.team_enabled or self.start_gate_open:
+            return False
+        pose = self._world_pose()
+        if pose is None:
+            return True
+        if self.start_leader is None:
+            ahead = [(math.hypot(p['x'] - pose[0], p['y'] - pose[1]), name)
+                     for name, p in self.team_peers.items()
+                     if self._in_front(pose, p['x'], p['y'],
+                                       START_LEADER_AHEAD_M, START_LEADER_SIDE_M)]
+            if not ahead:
+                self.start_gate_open = True
+                return False
+            self.start_leader = min(ahead)[1]
+            self.start_gate_since = time.monotonic()
+            self.get_logger().info(
+                f'รอ {self.start_leader} ถึงแยกก่อน แล้วค่อยออกจากจุดเริ่ม')
+        leader = self.team_peers.get(self.start_leader)
+        if (leader is None or leader.get('junction_reached')
+                or leader.get('state') in (GOAL_PARKING, GOAL_REACHED)
+                or time.monotonic() - self.start_gate_since > START_GATE_TIMEOUT_SECONDS):
+            self.start_gate_open = True
+            self.get_logger().info(f'{self.start_leader} ถึงแยกแล้ว: ออกจากจุดเริ่ม')
+            return False
+        return True
+
+    def _clearance_peer(self):
+        """Name a teammate just in front that we must not drive into."""
+        pose = self._world_pose()
+        if pose is None:
+            return None
+        for name, peer in self.team_peers.items():
+            if peer.get('state') in (GOAL_PARKING, GOAL_REACHED):
+                continue  # the parking queue handles itself
+            if not self._in_front(pose, peer['x'], peer['y'], CLEAR_AHEAD_M, CLEAR_SIDE_M):
+                continue
+            peer_pose = (peer['x'], peer['y'], peer.get('heading', 0.0))
+            mutual = self._in_front(peer_pose, pose[0], pose[1],
+                                    CLEAR_AHEAD_M, CLEAR_SIDE_M)
+            # When both see each other only the later robot waits; a robot
+            # turning on the spot cannot give way, so always wait for it.
+            # CENTERING still drives, and we may be centring too: no exception.
+            if (mutual and peer.get('state') not in (JUNCTION_SCAN, JUNCTION_PAUSE, TURNING)
+                    and not self._peer_has_priority(name, peer)):
+                continue
+            return name
+        return None
 
     def _peer_has_priority(self, name, peer):
         """The robot that entered the current route earlier has right of way."""
@@ -361,6 +665,8 @@ class MazeSolver(Node):
             forward = dx * math.cos(pose[2]) + dy * math.sin(pose[2])
             side = abs(-dx * math.sin(pose[2]) + dy * math.cos(pose[2]))
             opposite = abs(angle_difference(peer['heading'], pose[2]))
+            if peer.get('state') in PIVOTING_STATES + (GOAL_REACHED, GOAL_PARKING):
+                continue  # stopped where it is: walk up and wait behind it
             if (0.0 < forward < HEAD_ON_DETECT_M and side < 0.32
                     and opposite > HEAD_ON_HEADING_RAD):
                 if closest is None or forward < closest[2]:
@@ -422,7 +728,9 @@ class MazeSolver(Node):
         world = self._world_pose()
         if world is None:
             return
-        if self.state == CENTERING and self.active_team_branch is not None:
+        if (self.state == CENTERING and not self.junction_needs_request
+                and not self.scan_pending and not self.await_ahead_choice
+                and self.active_team_branch is not None):
             self._team_report({
                 'type': 'CANCEL_BRANCH',
                 'request_id': self.active_team_branch['request_id'],
@@ -438,12 +746,25 @@ class MazeSolver(Node):
             })
             self.pending_team_request = None
             self.team_choice = None
+        # Not yet asked: the junction is seen again after the yield.
+        self.junction_needs_request = False
+        self.ahead_request = None
+        self.await_ahead_choice = False
+        rescan = self.scan_pending
+        self.scan_pending = False
+        self.center_on_axle = False
         self.yield_start_pose = world[:2]
         self.yield_heading = world[2]
         self.yield_peer_name = peer_name
         if self.state != YIELD_RESUME:
             self.yield_resume_state = RETURNING if self.returning else FOLLOW
             self.yield_resume_target = world[:2]
+            if rescan and self.scan_hit_world is not None:
+                # Come back with the sensors short of the arm so it is hit again.
+                hx, hy = self.scan_hit_world
+                self.yield_resume_target = (
+                    hx - RGB_FRONT_OFFSET_M * math.cos(world[2]),
+                    hy - RGB_FRONT_OFFSET_M * math.sin(world[2]))
         self.yield_peer_was_yielding = self.team_peers.get(
             peer_name, {}).get('state') in (
                 YIELDING, YIELD_TURN, YIELD_ESCAPE, YIELD_WAIT)
@@ -456,34 +777,50 @@ class MazeSolver(Node):
                 self.yield_junction_world = (peer_junction['x'], peer_junction['y'])
         self.yield_escape_heading = None
         self.yield_rear_blocked = False
-        self.yield_scan_direction = 1
+        self.yield_at_line_end = False
+        # Judge the line end by this yield's own reversing only; the RGB row
+        # may be briefly off the line right after a turn.
+        self.last_path_color_distance = self.distance_total
         self._change_state(YIELDING)
         self.get_logger().debug(
             f'ถอยตามเส้นให้ {peer_name} จนกว่าเขาจะเลี้ยวพ้นทางร่วม')
 
     def _request_team_branch(self, returning, left_open, right_open,
-                             position_override=None):
+                             position_override=None, straight_open=True,
+                             approach_heading=None, exit_headings=None,
+                             offer_back=True):
         world = self._world_pose()
         position = position_override or self._world_sensor_position()
         if world is None or position is None:
             return
+        if approach_heading is not None:
+            # A black-mode scan ends rotated; headings come from its start.
+            world = (world[0], world[1], approach_heading)
+        exit_headings = exit_headings or {}
         self.request_sequence += 1
         choices = []
-        if not returning:
-            choices.append({'name': 'straight', 'heading': world[2]})
+        if not returning and straight_open:
+            choices.append({'name': 'straight',
+                            'heading': exit_headings.get('straight', world[2])})
         if left_open:
-            choices.append({'name': 'left', 'heading': world[2] + math.pi / 2})
+            choices.append({'name': 'left', 'heading': exit_headings.get(
+                'left', world[2] + math.pi / 2)})
         if right_open:
-            choices.append({'name': 'right', 'heading': world[2] - math.pi / 2})
-        choices.append({'name': 'back', 'heading': world[2] + math.pi})
+            choices.append({'name': 'right', 'heading': exit_headings.get(
+                'right', world[2] - math.pi / 2)})
+        if offer_back:
+            choices.append({'name': 'back', 'heading': world[2] + math.pi})
         if returning and self.junctions:
             node = self.junctions[-1]
             original = node.get('world_heading', world[2] + math.pi)
-            headings = [(original, False), (original + math.pi, True)]
+            measured = node.get('exit_headings', {})  # black-mode scan
+            headings = [(original + math.pi, True)]
+            if node.get('straight_open', True):
+                headings.insert(0, (measured.get('straight', original), False))
             if node['left_open']:
-                headings.append((original + math.pi / 2, False))
+                headings.append((measured.get('left', original + math.pi / 2), False))
             if node['right_open']:
-                headings.append((original - math.pi / 2, False))
+                headings.append((measured.get('right', original - math.pi / 2), False))
             choices = []
             for heading, fallback in headings:
                 turn = angle_difference(heading, world[2])
@@ -549,12 +886,49 @@ class MazeSolver(Node):
         reason = {'UNEXPLORED_BRANCH': 'สำรวจทางที่ยังไม่เคยไป',
                   'KNOWN_RETURN_ROUTE': 'ไม่เหลือกิ่งอื่นที่เปิด จึงย้อนทางเข้าเดิม',
                   'REVISIT_OPEN_BRANCH': 'กิ่งที่เปิดเคยถูกเลือกแล้ว จึงใช้ทางเดิมต่อ',
-                  'TOWARD_GOAL': 'เดินไปทางเป้าหมายที่ทีมพบ'}.get(choice.get('reason'), 'ทีมเลือกทาง')
+                  'TOWARD_GOAL': 'เดินไปทางเป้าหมายที่ทีมพบ',
+                  'ROUTE_TO_GOAL': 'ทางที่สั้นที่สุดไปเป้าหมายตามแผนที่',
+                  'LIKELY_KNOWN_BRANCH': 'กิ่งที่น่าจะพาไปที่ที่ทีมรู้แล้ว',
+                  'TOWARD_UNEXPLORED': 'ไปหาแยกที่ยังมีทางไม่ได้สำรวจที่ใกล้ที่สุด',
+                  'ASSIGNED_BRANCH': 'สำรวจกิ่งที่ทีมจองให้',
+                  'TOWARD_ASSIGNED': 'ไปหางานที่ทีมจองให้',
+                  }.get(choice.get('reason'), 'ทีมเลือกทาง')
         self.get_logger().info(f'เลือก{label}ที่ J{choice["junction_id"]}: {reason}')
         self.pending_team_request = None
         self.team_choice = None
         self.no_route_logged = False
         return True
+
+    def _ask_at_junction_centre(self):
+        """Wheels are on the junction; RGB now looks past it at the straight arm."""
+        self.junction_needs_request = False
+        node = self.junctions[-1]
+        node['straight_open'] = self.sensors.any_black() or self.sensors.any_yellow()
+        self.get_logger().info(
+            f"J{node['id']} ทางตรง{'เปิด' if node['straight_open'] else 'ปิด'} "
+            '(อ่านจากพื้นเลยกลางแยก)')
+        if self.team_enabled:
+            self._request_team_branch(
+                False, node['left_open'], node['right_open'],
+                node['world_position'], straight_open=node['straight_open'])
+            self._change_state(JUNCTION_PAUSE)
+            return
+        if self.branch_angle == 0.0 and not node['straight_open']:
+            self.branch_angle = math.pi / 2 if node['left_open'] else -math.pi / 2
+        self._leave_junction_center()
+
+    def _leave_junction_center(self):
+        if self.branch_angle == 0.0:
+            # Cross the marker without treating its yellow centre as
+            # a lost line; the new straight segment begins ahead.
+            self.returning = False
+            self.wait_for_yellow_clear = True
+            self._new_segment()
+            self.branch_capture_heading = self.pose[2]
+            self.branch_capture_start_distance = self.distance_total
+            self._change_state(BRANCH_CAPTURE)
+        else:
+            self._start_turn(self.branch_angle, FOLLOW, 'BRANCH')
 
     def _sensor_position(self):
         x, y, yaw = self.pose
@@ -610,7 +984,8 @@ class MazeSolver(Node):
     def _new_segment(self):
         self.trail_id += 1
         self.trail_start_distance = self.distance_total
-        self._trail_event('IN_PROGRESS')
+        if self.sensors.any_black() or self.sensors.any_yellow():
+            self._trail_event('IN_PROGRESS')
 
     def _change_state(self, state):
         labels = {RETURNING: 'ย้อนกลับไปเลือกทางที่แยก',
@@ -624,6 +999,10 @@ class MazeSolver(Node):
             self.get_logger().debug(f'{self.state} -> {state}')
         self.state = state
         self.state_start_time = time.monotonic()
+        # A latched hit belongs to the drive that saw it.
+        self.outer_hit_position = None
+        self.outer_hit_world = None
+        self.outer_hit_sides = set()
 
     def _start_turn(self, angle, after, kind):
         if self.pose is None:
@@ -644,6 +1023,10 @@ class MazeSolver(Node):
                     cmd.angular.z = max(-MAX_TURN, min(
                         MAX_TURN, angle_difference(
                             self.last_centered_pose[2], self.pose[2])))
+                return
+            if (self.black_mode and self.state == FOLLOW
+                    and self.last_centered_pose is not None):
+                self._begin_line_end_check()
                 return
             self._begin_line_recovery(self.state)
             self.get_logger().warning(
@@ -689,8 +1072,17 @@ class MazeSolver(Node):
             YIELD_LINE_TURN_GAIN * line_error))
 
     def _begin_line_recovery(self, after_state, anchor=None):
+        self._drop_ahead_request()
         self.line_search_after = after_state
-        self.line_lost_anchor = (anchor or self.last_centered_pose or self.pose)
+        anchor = anchor or self.last_centered_pose or self.pose
+        previous = self.line_lost_anchor
+        # Losing the line again at the same spot continues the same search.
+        if (previous is None or
+                math.hypot(anchor[0] - previous[0], anchor[1] - previous[1]) > 0.05):
+            self.scan_rotation = 0.0
+            self.scan_saw_black = False
+            self.line_search_given_up = False
+        self.line_lost_anchor = anchor
         self.line_lost_phase = 'RETURN_TO_ANCHOR'
         self.line_lost_turn_direction = self.align_last_side
         self._change_state(LINE_LOST)
@@ -707,9 +1099,16 @@ class MazeSolver(Node):
 
     def _recover_lost_line(self, cmd, now):
         """Return to a recently observed line position, then sweep in place."""
-        anchor_x, anchor_y, anchor_yaw = self.line_lost_anchor
-        dx = anchor_x - self.pose[0]
-        dy = anchor_y - self.pose[1]
+        if self.line_search_given_up:
+            return  # stay stopped rather than spin; see the warning below
+        if self.sensors.any_black():
+            self.scan_saw_black = True
+        anchor_yaw = self.line_lost_anchor[2]
+        # Compare axle points: turning in place moves base_link, not the axle.
+        anchor_x, anchor_y = self._axle_point(self.line_lost_anchor)
+        axle_x, axle_y = self._axle_point(self.pose)
+        dx = anchor_x - axle_x
+        dy = anchor_y - axle_y
         distance = math.hypot(dx, dy)
         if distance > ANCHOR_ARRIVAL_M:
             self.line_lost_phase = 'RETURN_TO_ANCHOR'
@@ -742,13 +1141,35 @@ class MazeSolver(Node):
                                  else -ANCHOR_TURN_SPEED)
                 return
             self.line_lost_phase = 'SCAN_AT_ANCHOR'
+            self.scan_last_yaw = self.pose[2]
 
-        sweep_error = angle_difference(self.pose[2], anchor_yaw)
-        if sweep_error >= ANCHOR_SWEEP_RAD:
-            self.line_lost_turn_direction = -1
-        elif sweep_error <= -ANCHOR_SWEEP_RAD:
-            self.line_lost_turn_direction = 1
+        # A narrow left/right sweep can miss a line after drifting sideways.
+        # Rotate all the way around until RGB finds black, but only once.
+        self.scan_rotation += abs(angle_difference(self.pose[2], self.scan_last_yaw))
+        self.scan_last_yaw = self.pose[2]
+        if self.scan_rotation >= 2 * math.pi:
+            # With walls at dead ends, a lost line is not proof of one.
+            if self.team_enabled and self.active_team_branch is not None:
+                self._team_report({'type': 'RETRY_BRANCH', **self.active_team_branch})
+                self.active_team_branch = None
+            # A U-turn only helps on the way out with the line seen behind;
+            # returning, it would face the dead end again.
+            if self.scan_saw_black and self.line_search_after == FOLLOW:
+                self.get_logger().warning(
+                    'หมุนหาเส้นครบรอบแล้วไม่เจอ: กลับรถย้อนไปแยกล่าสุด')
+                self.line_lost_anchor = None
+                self._start_turn(math.pi, RETURNING, 'UTURN')
+                return
+            self.line_search_given_up = True
+            self.get_logger().error(
+                'หมุนหาเส้นครบรอบแล้วไม่เจอทางที่ไปต่อได้: หยุดรอ (ต้องช่วยวางหุ่นกลับบนเส้น)')
+            return
         cmd.angular.z = self.line_lost_turn_direction * ANCHOR_TURN_SPEED
+
+    def _axle_point(self, pose):
+        x, y, yaw = pose
+        return (x + WHEEL_X_OFFSET_M * math.cos(yaw),
+                y + WHEEL_X_OFFSET_M * math.sin(yaw))
 
     def _line_error(self):
         weights = [2, 1, -1, -2]  # leftmost to rightmost
@@ -760,42 +1181,370 @@ class MazeSolver(Node):
         turn = TURN_GAIN * self._line_error()
         return max(-MAX_TURN, min(MAX_TURN, turn))
 
+    def _remember_junction(self, position, world_position, heading,
+                           world_heading, left_open, right_open):
+        """Push a new outward junction, or reuse the saved one at this spot."""
+        known_index = next((index for index in
+                            range(len(self.junctions) - 1, -1, -1)
+                            if (math.hypot(
+                                world_position[0] - self.junctions[index][
+                                    'world_position'][0],
+                                world_position[1] - self.junctions[index][
+                                    'world_position'][1]) < 0.25
+                                and abs(angle_difference(
+                                    heading, self.junctions[index][
+                                        'heading'])) < 0.6)), None)
+        if known_index is None:
+            self.junction_count += 1
+            self.junctions.append({
+                'id': self.junction_count,
+                'position': position,
+                'world_position': world_position,
+                'heading': heading,
+                'world_heading': world_heading,
+                'left_open': left_open,
+                'right_open': right_open,
+                'straight_open': True,
+            })
+        else:
+            self.junctions = self.junctions[:known_index + 1]
+            node = self.junctions[-1]
+            node['position'] = position
+            node['world_position'] = world_position
+            node['left_open'] |= left_open
+            node['right_open'] |= right_open
+            self.get_logger().debug(f"กลับถึงแยกที่เคยบันทึก J{node['id']}")
+        return self.junctions[-1]
+
+    def _on_outer_hit(self):
+        """Image callback: latch where an outer sensor first touched black."""
+        sides = {side for side, index in (('left', 0), ('right', 3))
+                 if self.sensors.black[index]}
+        if self.state == CENTERING and self.scan_pending:
+            # The other arm may pass under its sensor a frame later.
+            self.scan_sides |= sides
+            return
+        hiding = self.escape is not None and self.escape['hiding']
+        if (self.pose is None or hiding
+                or self.state not in (FOLLOW, RETURNING, YIELD_ESCAPE)
+                or self.distance_total < self.trigger_resume_distance):
+            return
+        if self.outer_hit_position is None:
+            self.outer_hit_position = self._sensor_position()
+            self.outer_hit_world = self._world_sensor_position()
+        self.outer_hit_sides |= sides
+
+    def _begin_black_junction(self):
+        """Bring the wheel axle onto the hit point; the sweep pivots there."""
+        self.center_target = self.outer_hit_position
+        self.scan_hit_world = self.outer_hit_world
+        self.scan_sides = set(self.outer_hit_sides)
+        self.scan_from_line_end = False
+        self.center_heading = self.pose[2]
+        self.scan_returning = self.returning
+        self.junction_entry_pose = self.last_centered_pose or self.pose
+        self.scan_pending = True
+        self.center_on_axle = True
+        self.get_logger().debug(
+            f'ตัวนอกเห็นเส้น: หยุดแล้วเข้ากลางจุดเพื่อหมุนสแกน; '
+            f'black={self.sensors.black}')
+        self._change_state(CENTERING)
+
+    def _report_node(self, kind, position, approach_heading, **extra):
+        """Tell the team map about a start, corner or dead end."""
+        self._team_report({'type': 'NODE', 'kind': kind,
+                           'x': position[0], 'y': position[1],
+                           'approach_heading': approach_heading, **extra})
+
+    def _ask_ahead(self):
+        """Ask about a mapped junction before reaching it, once per junction."""
+        if self.ahead_request is not None:
+            node = self.ahead_request['node']
+            sx, sy = self._world_sensor_position()
+            yaw = self._world_pose()[2]
+            dx, dy = node['x'] - sx, node['y'] - sy
+            along = dx * math.cos(yaw) + dy * math.sin(yaw)
+            lateral = abs(-dx * math.sin(yaw) + dy * math.cos(yaw))
+            if along < -0.20 or lateral > 0.10:
+                self._drop_ahead_request()  # behind us, or no longer on our line
+            return
+        if (self.pending_team_request is not None or self.returning or
+                time.monotonic() - self.last_team_state_at > TEAM_MAP_FRESH_SECONDS):
+            return
+        sx, sy = self._world_sensor_position()
+        yaw = self._world_pose()[2]
+        for node in self.team_nodes:
+            if node.get('kind') != 'JUNCTION':
+                continue
+            dx, dy = node['x'] - sx, node['y'] - sy
+            along = dx * math.cos(yaw) + dy * math.sin(yaw)
+            lateral = abs(-dx * math.sin(yaw) + dy * math.cos(yaw))
+            if 0.05 <= along <= LOOKAHEAD_M and lateral <= 0.05:
+                self.scan_hits = {'straight': [], 'left': [], 'right': []}
+                for key, branch in node['branches'].items():
+                    heading = branch.get('heading', int(key) * math.pi / 2)
+                    self._bin_scan_angle(angle_difference(heading, yaw))
+                exits = {name: yaw + sum(a) / len(a)
+                         for name, a in self.scan_hits.items() if a}
+                self._request_team_branch(
+                    False, 'left' in exits, 'right' in exits, (node['x'], node['y']),
+                    straight_open='straight' in exits, approach_heading=yaw,
+                    exit_headings=exits)
+                self.ahead_request = {'node': node, 'exits': exits,
+                                      'request_id': self.pending_team_request['request_id']}
+                return
+
+    def _drop_ahead_request(self):
+        if self.ahead_request is None:
+            return
+        if (self.pending_team_request is not None and self.pending_team_request[
+                'request_id'] == self.ahead_request['request_id']):
+            self._team_report({'type': 'CANCEL_BRANCH',
+                               'request_id': self.pending_team_request['request_id']})
+            self.pending_team_request = None
+            self.team_choice = None
+        self.ahead_request = None
+        self.await_ahead_choice = False
+
+    def _arrive_with_ahead_request(self):
+        """At the junction asked about: pass straight, or centre to turn/wait."""
+        ahead = self.ahead_request
+        if ahead is None:
+            return False
+        node = ahead['node']
+        hx, hy = self.outer_hit_world
+        if math.hypot(node['x'] - hx, node['y'] - hy) > 0.15:
+            # Something else came first (e.g. an unmapped corner): withdraw.
+            self._drop_ahead_request()
+            return False
+        exits = ahead['exits']
+        world = self._world_pose()
+        local = self._remember_junction(
+            self._sensor_position(), (node['x'], node['y']), self.pose[2], world[2],
+            'left' in exits, 'right' in exits)
+        local['straight_open'] = 'straight' in exits
+        local['exit_headings'] = exits
+        self.active_junction_world = (node['x'], node['y'])
+        self.junction_entry_pose = self.last_centered_pose or self.pose
+        self.ahead_request = None
+        self.trigger_resume_distance = self.distance_total + JUNCTION_ESCAPE_DISTANCE_M
+        center = self.outer_hit_position
+        if self.team_choice is not None and self._apply_team_choice():
+            if abs(self.branch_angle) < 0.35:
+                self.get_logger().info(f"ผ่าน J{node['id']} ตรงไปโดยไม่หยุด")
+                self.outer_hit_position = None
+                return True
+            self.await_ahead_choice = False
+        else:
+            self.await_ahead_choice = True
+        # Turn (or wait for the answer) with the wheels on the junction.
+        self.center_target = center
+        self.center_heading = self.pose[2]
+        self.scan_pending = False
+        self.center_on_axle = True
+        self._change_state(CENTERING)
+        self.cmd_pub.publish(Twist())
+        return True
+
+    def _begin_line_end_check(self):
+        # Black maze: the line vanished, so pivot where it was last centred.
+        # Both sides are swept: nothing found is a dead end (BLOCKED, U-turn),
+        # a single exit is a drift or a bend the outer sensors missed.
+        self._drop_ahead_request()
+        x, y, yaw = self.last_centered_pose
+        self.center_target = (x + RGB_FRONT_OFFSET_M * math.cos(yaw),
+                              y + RGB_FRONT_OFFSET_M * math.sin(yaw))
+        self.scan_hit_world = self._world_sensor_position()
+        self.scan_sides = {'left', 'right'}
+        self.scan_from_line_end = True  # not at a node: never trust the map
+        self.center_heading = yaw
+        self.scan_returning = self.returning
+        self.junction_entry_pose = self.last_centered_pose
+        self.scan_pending = True
+        self.center_on_axle = True
+        self.get_logger().info('เส้นหาย: กลับไปจุดสุดท้ายที่เห็นเส้นแล้วหมุนสแกน')
+        self._change_state(CENTERING)
+
+    def _start_junction_scan(self):
+        self.scan_pending = False
+        self.center_on_axle = False
+        self.scan_pivot = self._axle_point(self.pose)
+        self.scan_pivot_world = self._axle_point(self._world_pose())
+        self.scan_heading = self.pose[2]
+        self.scan_hits = {'straight': [], 'left': [], 'right': []}
+        # Wheels on the centre: the inner sensors already sit over the
+        # straight arm, so only the sides an outer sensor touched are swept.
+        if self.sensors.black[1] or self.sensors.black[2]:
+            self.scan_hits['straight'].append(0.0)
+        self.scan_phases = [side for side in ('left', 'right')
+                            if side in self.scan_sides]
+        if self.escape is not None and not self.escape['hiding']:
+            node = self._known_node(self.scan_pivot_world)
+            if node is not None and self._follow_route_step(node):
+                return
+            px, py = self.scan_pivot_world
+            near = [(n['id'], n['kind'], round(n['x'], 2), round(n['y'], 2))
+                    for n in self.team_nodes
+                    if math.hypot(n['x'] - px, n['y'] - py) < 0.4]
+            self.get_logger().warning(
+                'ทางหลบไม่ตรงกับแผนที่: เลิกหลบ ใช้การสแกนปกติ; '
+                f'pivot=({px:.2f},{py:.2f}) matched={node and node["id"]} '
+                f'next={self.route_steps[:1]} near={near}')
+            self.escape = None
+            self.route_steps = []
+        known = (None if self.scan_from_line_end
+                 else self._known_node(self.scan_pivot_world))
+        if known is not None:
+            # The team already mapped this place: use its exits, no sweep.
+            world_h0 = self._world_pose()[2]
+            self.scan_hits = {'straight': [], 'left': [], 'right': []}
+            for key, branch in known['branches'].items():
+                heading = branch.get('heading', int(key) * math.pi / 2)
+                self._bin_scan_angle(angle_difference(heading, world_h0))
+            self.get_logger().info(f"ใช้ข้อมูลทีมที่ J{known['id']}: ไม่ต้องหมุนสแกน")
+            self._finish_junction_scan()
+            return
+        self._change_state(JUNCTION_SCAN)
+
+    def _scan_junction(self, cmd):
+        """Sweep to ±130° on each touched side, noting inner-sensor black."""
+        theta = angle_difference(self.pose[2], self.scan_heading)
+        if self.sensors.black[1] or self.sensors.black[2]:
+            self._bin_scan_angle(theta)
+        while self.scan_phases and (
+                (self.scan_phases[0] == 'left' and theta >= SCAN_LIMIT_RAD) or
+                (self.scan_phases[0] == 'right' and theta <= -SCAN_LIMIT_RAD)):
+            self.scan_phases.pop(0)
+        if not self.scan_phases:
+            self._finish_junction_scan()
+        else:
+            cmd.angular.z = (ROTATE_SPEED if self.scan_phases[0] == 'left'
+                             else -ROTATE_SPEED)
+
+    def _bin_scan_angle(self, theta):
+        """File an exit angle; the way in (about 180 deg) fits no window."""
+        if abs(theta) <= SCAN_STRAIGHT_MAX_RAD:
+            self.scan_hits['straight'].append(theta)
+        elif SCAN_SIDE_MIN_RAD <= theta <= SCAN_LIMIT_RAD:
+            self.scan_hits['left'].append(theta)
+        elif -SCAN_LIMIT_RAD <= theta <= -SCAN_SIDE_MIN_RAD:
+            self.scan_hits['right'].append(theta)
+
+    def _known_node(self, world_xy):
+        """Nearest mapped junction or corner, while the team map is fresh."""
+        if (not self.team_enabled or world_xy is None or
+                time.monotonic() - self.last_team_state_at > TEAM_MAP_FRESH_SECONDS):
+            return None
+        best = None
+        for node in self.team_nodes:
+            if node.get('kind') not in ('JUNCTION', 'CORNER'):
+                continue
+            distance = math.hypot(node['x'] - world_xy[0], node['y'] - world_xy[1])
+            if distance <= KNOWN_NODE_RADIUS_M and (best is None or distance < best[0]):
+                best = (distance, node)
+        return best[1] if best else None
+
+    def _finish_junction_scan(self):
+        exits = {name: sum(angles) / len(angles)
+                 for name, angles in self.scan_hits.items() if angles}
+        h0 = self.scan_heading
+        world_h0 = h0 + angle_difference(self._world_pose()[2], self.pose[2])
+        labels = {'left': 'ซ้าย', 'straight': 'ตรง', 'right': 'ขวา'}
+        self.get_logger().info(
+            'สแกนแยก: ' + ' '.join(
+                f"{labels[name]}={'มี' if name in exits else 'ไม่มี'}"
+                for name in ('left', 'straight', 'right')))
+        self.trigger_resume_distance = (self.distance_total +
+                                        JUNCTION_ESCAPE_DISTANCE_M)
+        if not exits:
+            if self.team_enabled and self.active_team_branch is not None:
+                self._team_report({'type': 'BLOCKED', **self.active_team_branch})
+                self.active_team_branch = None
+            self._report_node('DEAD_END', self.scan_pivot_world, world_h0)
+            self._trail_event('BLOCKED_BRANCH')
+            self.get_logger().warning('สแกนแล้วไม่มีทางไปต่อ: กลับรถ')
+            self._start_turn(angle_difference(h0 + math.pi, self.pose[2]),
+                             RETURNING, 'UTURN')
+            return
+        if len(exits) == 1:
+            # A corner, or a wobble that touched the line edge: no choice here.
+            (name, theta), = exits.items()
+            self.get_logger().info(f'ทางเดียว ({labels[name]}): ไปต่อโดยไม่ถามทีม')
+            if name != 'straight':  # straight only: a wobble, not a place
+                self._report_node('CORNER', self.scan_pivot_world, world_h0,
+                                  exit_heading=world_h0 + theta)
+            self._start_turn(angle_difference(h0 + theta, self.pose[2]),
+                             RETURNING if self.scan_returning else FOLLOW,
+                             'CORNER')
+            return
+        if self.scan_returning:
+            self._ask_at_missed_junction(exits, h0, world_h0)
+            return
+        node = self._remember_junction(
+            self.scan_pivot, self.scan_hit_world, h0, world_h0,
+            'left' in exits, 'right' in exits)
+        node['straight_open'] = 'straight' in exits
+        node['exit_headings'] = {name: world_h0 + theta
+                                 for name, theta in exits.items()}
+        self.active_junction_world = node['world_position']
+        self.returning = False
+        self._trail_event('JUNCTION')
+        if self.team_enabled:
+            self._request_team_branch(
+                False, node['left_open'], node['right_open'],
+                node['world_position'], straight_open=node['straight_open'],
+                approach_heading=world_h0, exit_headings=node['exit_headings'])
+            self._change_state(JUNCTION_PAUSE)
+            return
+        order = (('left', 'right', 'straight')
+                 if self.junction_choice == 'side_first'
+                 else ('straight', 'left', 'right'))
+        name = next(n for n in order if n in exits)
+        self.branch_angle = angle_difference(h0 + exits[name], self.pose[2])
+        self._leave_junction_center()
+
+    def _ask_at_missed_junction(self, exits, h0, world_h0):
+        # Returning through a junction the outward pass never saved. Store it
+        # as the outward pass saw it (facing h0 + pi): robot-left is
+        # outward-right, and the arm behind is the dead end just explored.
+        self.junction_count += 1
+        node = {
+            'id': self.junction_count,
+            'position': self.scan_pivot,
+            'world_position': self.scan_hit_world,
+            'heading': h0 + math.pi,
+            'world_heading': world_h0 + math.pi,
+            'left_open': 'right' in exits,
+            'right_open': 'left' in exits,
+            'straight_open': False,
+            'exit_headings': {
+                {'left': 'right', 'right': 'left'}[name]: world_h0 + theta
+                for name, theta in exits.items() if name != 'straight'},
+        }
+        self.junctions.append(node)
+        self.active_junction_world = node['world_position']
+        self.get_logger().warning('ขาไปพลาดการบันทึกแยก; สแกนพบตอนขากลับ')
+        self._trail_event('BACK_AT_JUNCTION')
+        # Wheels are already on the centre: leave from here once chosen.
+        self.returning = False
+        if self.team_enabled:
+            self._request_team_branch(
+                True, node['right_open'], node['left_open'],
+                node['world_position'], approach_heading=world_h0)
+            self._change_state(JUNCTION_PAUSE)
+            return
+        name = next((n for n in ('left', 'right', 'straight') if n in exits))
+        self.branch_angle = angle_difference(h0 + exits[name], self.pose[2])
+        self._leave_junction_center()
+
     def _at_junction(self, returning, left_open=False, right_open=False):
         self.junction_entry_pose = self.last_centered_pose or self.pose
         self.get_logger().info(
             f'เห็นแยก: black={self.sensors.black}, yellow={self.sensors.yellow}')
         if not returning:
-            position = self._sensor_position()
-            world_position = self._world_sensor_position()
-            known_index = next((index for index in
-                                range(len(self.junctions) - 1, -1, -1)
-                                if (math.hypot(
-                                    world_position[0] - self.junctions[index][
-                                        'world_position'][0],
-                                    world_position[1] - self.junctions[index][
-                                        'world_position'][1]) < 0.25
-                                    and abs(angle_difference(
-                                        self.pose[2], self.junctions[index][
-                                            'heading'])) < 0.6)), None)
-            if known_index is None:
-                self.junction_count += 1
-                self.junctions.append({
-                    'id': self.junction_count,
-                    'position': position,
-                    'world_position': world_position,
-                    'heading': self.pose[2],
-                    'world_heading': self._world_pose()[2],
-                    'left_open': left_open,
-                    'right_open': right_open,
-                })
-            else:
-                self.junctions = self.junctions[:known_index + 1]
-                node = self.junctions[-1]
-                node['position'] = position
-                node['world_position'] = world_position
-                node['left_open'] |= left_open
-                node['right_open'] |= right_open
-                self.get_logger().debug(f"กลับถึงแยกที่เคยบันทึก J{node['id']}")
+            self._remember_junction(
+                self._sensor_position(), self._world_sensor_position(),
+                self.pose[2], self._world_pose()[2], left_open, right_open)
             self._trail_event('JUNCTION')
             if self.junction_choice == 'side_first':
                 self.branch_angle = math.pi / 2 if left_open else -math.pi / 2
@@ -817,15 +1566,21 @@ class MazeSolver(Node):
                     return False
                 chosen = 'รอตัวกลางเลือกจากกิ่งที่จำได้'
             self.get_logger().debug(f'ขากลับเลือกเลี้ยว{chosen}')
+        if not returning:
+            # Bring the wheels onto the junction first; the RGB row then looks
+            # past it and shows whether a straight branch exists.
+            self.active_junction_world = self.junctions[-1]['world_position']
+            self.junction_needs_request = True
+            self.center_start = self.pose[:2]
+            self.center_heading = self.pose[2]
+            self._change_state(CENTERING)
+            return True
         if self.team_enabled:
-            if returning:
-                # Left/right swap when the robot approaches from the other side.
-                self._request_team_branch(
-                    True, self.junctions[-1]['right_open'],
-                    self.junctions[-1]['left_open'],
-                    self.junctions[-1].get('world_position'))
-            else:
-                self._request_team_branch(False, left_open, right_open)
+            # Left/right swap when the robot approaches from the other side.
+            self._request_team_branch(
+                True, self.junctions[-1]['right_open'],
+                self.junctions[-1]['left_open'],
+                self.junctions[-1].get('world_position'))
         self._change_state(JUNCTION_PAUSE)
         self.get_logger().debug(
             f"แยก {self.junctions[-1]['id']} "
@@ -845,6 +1600,7 @@ class MazeSolver(Node):
                                    'heading': world[2], 'state': self.state,
                                    'route_order': self.team_route_order,
                                    'returning': self.returning,
+                                   'blocked_behind': self._peer_behind_close(),
                                    'yield_to': self.yield_peer_name if self.state == YIELDING else None,
                                    'yield_junction': (
                                        {'x': self.yield_junction_world[0],
@@ -858,26 +1614,6 @@ class MazeSolver(Node):
                 self._team_report(self.pending_team_request)
                 self.last_team_request_at = now
 
-        if self.team_enabled and self.team_goal is not None and self.pose is not None:
-            world = self._world_pose()
-            goal_distance = math.hypot(world[0] - self.team_goal['x'],
-                                       world[1] - self.team_goal['y'])
-            peer_ahead = self._peer_ahead()
-            queued_behind_teammate = (
-                goal_distance < TEAM_ASSEMBLY_RADIUS_M
-                and peer_ahead is not None
-                and peer_ahead[1].get('state') == GOAL_REACHED)
-            if goal_distance < TEAM_GOAL_RADIUS_M or queued_behind_teammate:
-                if self.state != GOAL_REACHED:
-                    if queued_behind_teammate and goal_distance >= TEAM_GOAL_RADIUS_M:
-                        self.get_logger().debug(
-                            f'รวมพลหลังเพื่อนใกล้เป้าหมาย ระยะ {goal_distance:.2f} m')
-                        self._trail_event('TEAM_ASSEMBLED_NEAR_GOAL')
-                    else:
-                        self.get_logger().debug('ถึงจุดรวมพลใกล้เป้าหมายของทีม')
-                        self._trail_event('TEAM_GOAL_REACHED')
-                    self._change_state(GOAL_REACHED)
-
         if self.state == GOAL_REACHED:
             self.cmd_pub.publish(cmd)
             return
@@ -888,12 +1624,16 @@ class MazeSolver(Node):
                 or now - self.last_odom_at > SIGNAL_STALE_SECONDS):
             if not self.waiting_logged:
                 self.get_logger().warning(
-                    'ข้อมูล RGB/Ultrasonic/odom หายหรือยังไม่มา: พักการขับจนสัญญาณกลับ')
+                    'รอข้อมูล: '
+                    f'RGB={self.sensors.fresh(SIGNAL_STALE_SECONDS)}, '
+                    f'Ultrasonic={self.ultrasonic.fresh(SIGNAL_STALE_SECONDS)}, '
+                    f'ตำแหน่ง={self.pose is not None and now - self.last_odom_at <= SIGNAL_STALE_SECONDS} '
+                    '(True=ได้รับแล้ว, False=ยังไม่มีหรือเก่า)')
                 self.waiting_logged = True
             self.cmd_pub.publish(cmd)
             return
         if self.waiting_logged:
-            self.get_logger().debug('ข้อมูลเซนเซอร์กลับมาแล้ว: ทำงานต่อ')
+            self.get_logger().info('ข้อมูลเซนเซอร์และตำแหน่งครบแล้ว: เริ่มทำงานต่อ')
             self.waiting_logged = False
         if self.team_enabled and now - self.last_team_state_at > 3.0:
             if not self.team_waiting_logged:
@@ -912,19 +1652,82 @@ class MazeSolver(Node):
             self.last_centered_pose = self.pose
 
         if (self.team_enabled and self.state in
-                (SEARCH, FOLLOW, APPROACH_JUNCTION, JUNCTION_PAUSE,
+                (SEARCH, FOLLOW, APPROACH_JUNCTION,
                  CENTERING, BRANCH_CAPTURE, RETURNING,
                  REACQUIRE, ALIGN_LINE, YIELD_RESUME)):
+            # Not while waiting at a junction: after a scan the robot faces
+            # wherever the sweep stopped, not the way it will drive.
             head_on = self._head_on_peer()
-            if (head_on is not None and
-                    self._peer_has_priority(head_on[0], head_on[1])):
-                self._begin_yield(head_on[0])
+            if head_on is None:
+                self.head_on_wait = None
+            elif self.head_on_hiding:
+                if self._on_head_on(head_on[0], head_on[1]):
+                    self.cmd_pub.publish(cmd)
+                    return
+            elif self._should_turn_back(head_on[0], head_on[1]):
+                self._begin_turn_back(head_on[0])
                 self.cmd_pub.publish(cmd)
                 return
+
+        if self.state == SEARCH and self._start_gate_closed():
+            self.cmd_pub.publish(cmd)
+            return
+
+        if (self.team_enabled and self.state in
+                (SEARCH, FOLLOW, APPROACH_JUNCTION, CENTERING, RETURNING, YIELD_RESUME)):
+            blocker = self._clearance_peer()
+            if blocker is not None:
+                if self.clearance_peer is None or self.clearance_peer['peer'] != blocker:
+                    self.get_logger().info(f'รอ {blocker} ที่อยู่ข้างหน้าออกไปก่อน')
+                    self.clearance_peer = {'peer': blocker, 'since': now}
+                elif self.team_peers[blocker].get('state') in PIVOTING_STATES:
+                    self.clearance_peer['since'] = now  # busy at a junction, not stuck
+                elif (self.state != SEARCH and not self.head_on_hiding
+                      and not self.returning
+                      and now - self.clearance_peer['since'] > PEER_WAIT_TURN_BACK_SECONDS):
+                    # It is not moving on: leave this corridor to it.
+                    self.clearance_peer = None
+                    self._begin_turn_back(blocker)
+                self.cmd_pub.publish(cmd)
+                return
+            self.clearance_peer = None
+
+        if self.state == YIELD_TURN:
+            error = angle_difference(self.turn_target, self.pose[2])
+            if abs(error) <= TURN_TOLERANCE_RAD:
+                self._change_state(YIELD_ESCAPE)
+            else:
+                cmd.angular.z = ROTATE_SPEED if error > 0 else -ROTATE_SPEED
+            self.cmd_pub.publish(cmd)
+            return
+
+        if self.state == YIELD_WAIT:
+            if self.escape_cleared:
+                if self._hide_depth() > CENTER_TOLERANCE_M:
+                    # Straight back out of the branch to the junction centre.
+                    cmd.linear.x = -SEARCH_SPEED
+                    cmd.angular.z = max(-MAX_TURN, min(MAX_TURN, 2.0 * angle_difference(
+                        self.escape['hide_heading'], self._world_pose()[2])))
+                else:
+                    self._resume_after_hiding()
+                    cmd = Twist()
+            self.cmd_pub.publish(cmd)
+            return
+
+        if self.state == HOLDING:
+            if now - self.state_start_time >= HOLD_TIMEOUT_SECONDS:
+                self.get_logger().warning('รอนานเกินไปแล้วไม่ได้รับ GO: ไปต่อเอง')
+                self.team_encounter = None
+                self._change_state(self.hold_resume_state)
+            self.cmd_pub.publish(cmd)
+            return
 
         if self.state == YIELDING:
             if self._yield_clear():
                 self.wait_for_yellow_clear = False
+                # Count line-free travel from here: reversing off the line
+                # end must not use up the grace for driving back onto it.
+                self.last_path_color_distance = self.distance_total
                 self._change_state(YIELD_RESUME)
                 self.yield_junction_world = None
                 self.yield_peer_name = None
@@ -939,20 +1742,20 @@ class MazeSolver(Node):
                 if not self.yield_rear_blocked:
                     self.get_logger().warning('มีหุ่นด้านหลัง หยุดก่อนถอยหลีกทาง')
                     self.yield_rear_blocked = True
-            elif (self.distance_total - self.last_path_color_distance >
-                  YIELD_PATH_GAP_M):
-                if not self.yield_line_missing_logged:
+            elif (self.yield_at_line_end or
+                  self.distance_total - self.last_path_color_distance >
+                  # Black maze: no paint gaps on the line, so stop almost at once.
+                  (YIELD_LINE_END_M if self.black_mode else YIELD_PATH_GAP_M)):
+                # Backed off the end of the line (e.g. last in the start
+                # queue): creep forward until the RGB sees it again, then
+                # hold there for the rest of this yield; spinning would lose
+                # the line for good.
+                if not self.yield_at_line_end:
                     self.get_logger().warning(
-                        'ถอยผ่านแยกแล้ว RGB ยังไม่เห็นเส้น: '
-                        'หมุนหาเส้นอยู่กับที่โดยยังให้ทางอยู่')
-                    self.yield_line_missing_logged = True
-                error = angle_difference(self.yield_heading,
-                                         self._world_pose()[2])
-                if error >= 1.0:
-                    self.yield_scan_direction = 1
-                elif error <= -1.0:
-                    self.yield_scan_direction = -1
-                cmd.angular.z = self.yield_scan_direction * ANCHOR_TURN_SPEED
+                        'ถอยจนสุดเส้นแล้ว: หยุดรอตรงนี้โดยยังให้ทางอยู่')
+                    self.yield_at_line_end = True
+                if not (self.sensors.any_black() or self.sensors.any_yellow()):
+                    cmd.linear.x = ALIGN_SPEED
             else:
                 self.yield_rear_blocked = False
                 heading_error = angle_difference(
@@ -1011,10 +1814,13 @@ class MazeSolver(Node):
             if abs(error) <= TURN_TOLERANCE_RAD:
                 if self.turn_kind == 'UTURN':
                     self.returning = True
+                    self._new_segment()
+                elif self.turn_kind in ('CORNER', 'ROUTE'):
+                    pass  # same corridor or a planned route: keep the trail
                 else:
                     self.returning = False
                     self.wait_for_yellow_clear = True
-                self._new_segment()
+                    self._new_segment()
                 self.line_search_after = self.turn_after
                 if self.turn_kind == 'BRANCH':
                     self.branch_capture_heading = self.turn_target
@@ -1034,6 +1840,30 @@ class MazeSolver(Node):
             if self.center_start is None:
                 self.center_start = self.pose[:2]
             world = self._world_pose()
+            if self.center_on_axle:
+                ax, ay = self._axle_point(self.pose)
+                heading = self.center_heading
+                remaining = ((self.center_target[0] - ax) * math.cos(heading) +
+                             (self.center_target[1] - ay) * math.sin(heading))
+                if abs(remaining) <= CENTER_TOLERANCE_M:
+                    if self.scan_pending:
+                        self._start_junction_scan()
+                    elif self.await_ahead_choice:
+                        # Asked ahead but no answer yet: wait for that answer.
+                        self.center_on_axle = False
+                        self.await_ahead_choice = False
+                        self.returning = False
+                        self._change_state(JUNCTION_PAUSE)
+                    else:
+                        self.center_on_axle = False
+                        self._leave_junction_center()
+                else:
+                    # Passed the hit point: back up the few centimetres.
+                    cmd.linear.x = SEARCH_SPEED if remaining > 0 else -SEARCH_SPEED
+                    cmd.angular.z = max(-MAX_TURN, min(
+                        MAX_TURN, 2.0 * angle_difference(heading, self.pose[2])))
+                self.cmd_pub.publish(cmd)
+                return
             if (self.team_enabled and self.use_ground_truth
                     and self.active_junction_world is not None):
                 dx = self.active_junction_world[0] - world[0]
@@ -1045,17 +1875,10 @@ class MazeSolver(Node):
                                        self.pose[1] - self.center_start[1])
                             >= RGB_FRONT_OFFSET_M)
             if centered:
-                if self.branch_angle == 0.0:
-                    # Cross the marker without treating its yellow centre as
-                    # a lost line; the new straight segment begins ahead.
-                    self.returning = False
-                    self.wait_for_yellow_clear = True
-                    self._new_segment()
-                    self.branch_capture_heading = self.pose[2]
-                    self.branch_capture_start_distance = self.distance_total
-                    self._change_state(BRANCH_CAPTURE)
+                if self.junction_needs_request:
+                    self._ask_at_junction_centre()
                 else:
-                    self._start_turn(self.branch_angle, FOLLOW, 'BRANCH')
+                    self._leave_junction_center()
             else:
                 cmd.linear.x = SEARCH_SPEED
                 cmd.angular.z = max(-MAX_TURN, min(
@@ -1064,18 +1887,52 @@ class MazeSolver(Node):
             self.cmd_pub.publish(cmd)
             return
 
-        if self.sensors.any_green():
-            if self.team_enabled:
-                world = self._world_pose()
-                self._team_report({'type': 'GOAL', 'x': world[0], 'y': world[1]})
-            self._trail_event('GOAL')
-            self._change_state(GOAL_REACHED)
+        if self.state == JUNCTION_SCAN:
+            self._scan_junction(cmd)
+            self.cmd_pub.publish(cmd)
+            return
+
+        if self.state not in (GOAL_PARKING, GOAL_REACHED) and self.sensors.any_green():
+            if not self.goal_reported:
+                self.goal_reported = True
+                if self.team_enabled:
+                    world = self._world_pose()
+                    self._team_report({'type': 'GOAL', 'x': world[0], 'y': world[1],
+                                       'approach_heading': world[2]})
+                self._trail_event('GOAL')
+            self.get_logger().info('เห็นพื้นที่เป้าหมาย: เดินตามเส้นเข้าไปจอด')
+            self.park_start_distance = self.distance_total
+            self.park_heading = self.pose[2]
+            self._change_state(GOAL_PARKING)
+
+        if self.state == GOAL_PARKING:
+            # Drive in along the line; stop at its end or close behind a
+            # teammate already parked. Nothing else matters in here.
+            driven = self.distance_total - self.park_start_distance
+            if self.ultrasonic.obstacle_ahead(GOAL_PARK_GAP_M):
+                if self.sensors.any_green():
+                    self.get_logger().info('จอดในพื้นที่เป้าหมายแล้ว')
+                    self._change_state(GOAL_REACHED)
+            elif self.sensors.any_black():
+                cmd.linear.x = APPROACH_SPEED
+                cmd.angular.z = self._line_follow_turn()
+            elif driven < GOAL_PARK_ENTRY_M and self.sensors.any_green():
+                # Came in beside the line (e.g. mid-turn): creep straight in.
+                cmd.linear.x = APPROACH_SPEED
+                cmd.angular.z = max(-MAX_TURN, min(MAX_TURN, angle_difference(
+                    self.park_heading, self.pose[2])))
+            elif self.sensors.any_green():
+                self.get_logger().info('จอดในพื้นที่เป้าหมายแล้ว')
+                self._change_state(GOAL_REACHED)
+            else:
+                # Neither line nor red: find the line again, then park.
+                self._begin_line_recovery(FOLLOW)
             self.cmd_pub.publish(cmd)
             return
 
         # Let followers back up too, before the front ultrasonic would see
         # the yielding robot as an obstacle. This opens space for a queue.
-        if (self.team_enabled and not self.returning
+        if (self.team_enabled and self.head_on_hiding and not self.returning
                 and self.state in (SEARCH, FOLLOW, APPROACH_JUNCTION,
                                    BRANCH_CAPTURE, REACQUIRE,
                                    ALIGN_LINE)):
@@ -1088,19 +1945,36 @@ class MazeSolver(Node):
                 self.cmd_pub.publish(cmd)
                 return
 
+        if not self.ultrasonic.obstacle_ahead(OBSTACLE_STOP_DISTANCE_M):
+            self.peer_wait = None  # nobody in front any more
         # Stop for one control tick before reversing.
-        if (self.state not in (REACQUIRE, LINE_LOST)
+        # Standing or pivoting at a junction cannot hit anything ahead, and
+        # the ultrasonic may be pointing down another line.
+        if (self.state not in (REACQUIRE, LINE_LOST, JUNCTION_PAUSE, TURNING,
+                               HOLDING, YIELD_TURN, YIELD_WAIT, YIELD_ESCAPE)
                 and self.ultrasonic.obstacle_ahead(OBSTACLE_STOP_DISTANCE_M)):
             peer = self._peer_ahead() if self.team_enabled else None
             if peer is not None:
                 peer_name, peer_pose, peer_distance = peer
                 opposite = (abs(angle_difference(peer_pose['heading'],
                                                  self._world_pose()[2]))
-                            > HEAD_ON_HEADING_RAD)
-                recovering = peer_pose.get('state') in (LINE_LOST, ALIGN_LINE,
-                                                       REACQUIRE)
-                if ((opposite or recovering) and
-                        self._peer_has_priority(peer_name, peer_pose)):
+                            > HEAD_ON_HEADING_RAD
+                            and peer_pose.get('state') not in
+                            PIVOTING_STATES + (GOAL_REACHED, GOAL_PARKING))
+                # Only a lost peer may back into us while it searches; one
+                # squaring up after a turn is driving away, so just wait.
+                recovering = peer_pose.get('state') == LINE_LOST
+                if opposite:
+                    if self.head_on_hiding:
+                        if self._on_head_on(peer_name, peer_pose):
+                            self.cmd_pub.publish(cmd)
+                            return
+                    elif self._should_turn_back(peer_name, peer_pose):
+                        self._begin_turn_back(peer_name)
+                        self.cmd_pub.publish(cmd)
+                        return
+                if (recovering and self.head_on_hiding
+                        and self._peer_has_priority(peer_name, peer_pose)):
                     self._begin_yield(peer_name)
                     self.cmd_pub.publish(cmd)
                     return
@@ -1110,14 +1984,37 @@ class MazeSolver(Node):
                         and peer_distance > 0.40):
                     # Wait for the later robot to back away; do not mark its
                     # occupied corridor as a wall or a blocked branch.
+                    if peer_pose.get('state') in (GOAL_REACHED, GOAL_PARKING):
+                        # Queue for the goal: close up behind the parked
+                        # teammate; at the parking gap this robot is parked.
+                        if not self.ultrasonic.obstacle_ahead(GOAL_PARK_GAP_M):
+                            if self.sensors.any_black():
+                                self._follow_line(cmd, APPROACH_SPEED)
+                        elif peer_pose.get('state') == GOAL_REACHED:
+                            self.get_logger().info('จอดต่อท้ายเพื่อนในแถวเป้าหมายแล้ว')
+                            self._change_state(GOAL_REACHED)
+                            cmd = Twist()
+                    elif not self.head_on_hiding:
+                        if self.peer_wait is None or self.peer_wait['peer'] != peer_name:
+                            self.peer_wait = {'peer': peer_name, 'since': now}
+                        elif now - self.peer_wait['since'] > PEER_WAIT_TURN_BACK_SECONDS:
+                            # It is not moving on: leave this corridor to it.
+                            self.peer_wait = None
+                            self._begin_turn_back(peer_name)
                     self.cmd_pub.publish(cmd)
                     return
             else:
                 if self.team_enabled and self.active_team_branch is not None:
                     self._team_report({'type': 'BLOCKED', **self.active_team_branch})
                     self.active_team_branch = None
+                world = self._world_pose()
+                self._report_node('DEAD_END', world[:2], world[2])
                 self._trail_event('BLOCKED_BRANCH')
-                self._change_state(REVERSING)
+                if self.team_enabled and not self.head_on_hiding and self._peer_behind_close():
+                    # A teammate right behind: turn on the spot, never back into it.
+                    self._start_turn(math.pi, RETURNING, 'UTURN')
+                else:
+                    self._change_state(REVERSING)
                 self.get_logger().warning('เจอกำแพง: ถอยสั้น หมุนกลับ แล้วตามเส้นย้อน')
                 self.cmd_pub.publish(cmd)
                 return
@@ -1235,6 +2132,10 @@ class MazeSolver(Node):
 
         if self.state == SEARCH:
             if self.sensors.any_black():
+                self.get_logger().info('ออกจากจุดเริ่มสีฟ้าและพบเส้นดำแล้ว')
+                world = self._world_pose()
+                self._report_node('START', self._world_sensor_position(),
+                                  world[2], heading=world[2])
                 self._new_segment()
                 self._change_state(FOLLOW)
             else:
@@ -1248,6 +2149,35 @@ class MazeSolver(Node):
                         SEARCH, anchor=self.search_start_pose)
                 else:
                     cmd.linear.x = SEARCH_SPEED
+
+        if (self.black_mode and self.outer_hit_position is not None
+                and self.state in (FOLLOW, RETURNING, YIELD_ESCAPE)):
+            if (self.state == RETURNING and self.junctions
+                    and math.hypot(
+                        self.outer_hit_position[0] - self.junctions[-1]['position'][0],
+                        self.outer_hit_position[1] - self.junctions[-1]['position'][1])
+                    <= RETURN_MARKER_RADIUS_M):
+                # The saved junction itself: RETURNING handles it from memory.
+                self.outer_hit_position = None
+            elif self.state == FOLLOW and self._arrive_with_ahead_request():
+                pass  # passed straight through: keep following this tick
+            else:
+                self._begin_black_junction()
+                self.cmd_pub.publish(Twist())
+                return
+
+        if self.state == YIELD_ESCAPE:
+            if self.escape is not None and self.escape['hiding']:
+                if self._hide_depth() >= HIDE_DEPTH_M:
+                    self._team_report({'type': 'HIDDEN'})
+                    self.get_logger().info('หลบเข้ากิ่งข้างแล้ว: รอเพื่อนผ่าน')
+                    self._change_state(YIELD_WAIT)
+                    self.cmd_pub.publish(Twist())
+                    return
+            if self.ultrasonic.obstacle_ahead(OBSTACLE_STOP_DISTANCE_M):
+                self.cmd_pub.publish(Twist())  # a robot, never a wall: wait
+                return
+            self._follow_line(cmd, RETURN_SPEED)
 
         if self.state == RETURNING:
             distance = self._distance_to_junction()
@@ -1300,6 +2230,9 @@ class MazeSolver(Node):
                 else:
                     self._follow_line(cmd, speed)
 
+        if self.state == FOLLOW and self.black_mode and self.team_enabled:
+            self._ask_ahead()
+
         if self.state == FOLLOW:
             distance = self._distance_to_junction()
             yellow_now = self.sensors.any_yellow()
@@ -1324,7 +2257,8 @@ class MazeSolver(Node):
         if self.state == APPROACH_JUNCTION:
             left, right = self.sensors.junction_sides()
             since_marker = self.distance_total - self.approach_start_distance
-            if (left or right) and since_marker <= JUNCTION_APPROACH_MAX_M:
+            if ((left or right) and self.sensors.any_yellow()
+                    and since_marker <= JUNCTION_APPROACH_MAX_M):
                 candidate = (left, right)
                 if candidate == self.junction_candidate:
                     self.junction_candidate_ticks += 1
@@ -1365,7 +2299,10 @@ class MazeSolver(Node):
 
         if self.state == JUNCTION_PAUSE:
             cmd = Twist()
-            if now - self.state_start_time >= JUNCTION_PAUSE_SECONDS:
+            # Leave as soon as the team has answered; the pause is only the
+            # longest wait before re-checking an unanswered request.
+            answered = self.team_enabled and self.team_choice is not None
+            if answered or now - self.state_start_time >= JUNCTION_PAUSE_SECONDS:
                 if self.team_enabled:
                     if (self.team_choice is not None and
                             self.team_choice.get('choice') is None):
@@ -1385,14 +2322,24 @@ class MazeSolver(Node):
                     if not self._apply_team_choice():
                         self.cmd_pub.publish(cmd)
                         return
+                if not self.returning:
+                    # The outward pass asked from the centre already.
+                    self._leave_junction_center()
+                    self.cmd_pub.publish(cmd)
+                    return
                 # RGB sits 8.5 cm ahead of the wheel centre. The outer sensor
                 # stops at the actual junction; move the wheels to its centre
                 # before rotating or crossing straight.
                 self.center_start = self.pose[:2]
                 self.center_heading = self.pose[2]
+                if self.black_mode:
+                    # Exit headings were measured from the scan pivot.
+                    self.center_target = self.junctions[-1]['position']
+                    self.center_on_axle = True
                 self._change_state(CENTERING)
 
-        if (self.trail_id and now - self.last_trail_update >= TRAIL_UPDATE_SECONDS
+        if (self.trail_id and (self.sensors.any_black() or self.sensors.any_yellow())
+                and now - self.last_trail_update >= TRAIL_UPDATE_SECONDS
                 and self.state in (FOLLOW, APPROACH_JUNCTION, RETURNING)):
             self._trail_event('IN_PROGRESS')
         self.cmd_pub.publish(cmd)
