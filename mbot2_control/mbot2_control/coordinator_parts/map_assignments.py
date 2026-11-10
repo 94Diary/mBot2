@@ -58,7 +58,7 @@ class MapAssignmentsMixin:
         owner = branch['owner']
         busy = owner not in (None, robot) and self._live(owner, now)
         return (branch['status'] != 'BLOCKED' and branch.get('leads_to') is None
-                and not branch.get('arrived_by') and not busy
+                and (not branch.get('arrived_by') or branch.get('observed_exit')) and not busy
                 and branch.get('hidden_by') is None)
 
     def _busy(self, robot):

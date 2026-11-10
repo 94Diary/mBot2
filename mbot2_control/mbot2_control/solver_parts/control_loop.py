@@ -803,7 +803,7 @@ class ControlLoopMixin:
                         if not self.no_route_logged:
                             message = ('ไม่มีกิ่งสำรวจที่ว่างและไปถึงได้: หยุดรอข้อมูลใหม่'
                                        if self.team_choice.get('reason') == 'WAIT_FOR_FRONTIER'
-                                       else 'ทีมไม่พบกิ่งที่ยังเปิด: หยุดรอข้อมูลใหม่')
+                                       else 'ยังไม่มีทางยืนยันถึงเป้าหมาย: หยุดรอข้อมูลใหม่')
                             self.get_logger().warning(message)
                             self.no_route_logged = True
                         if now - self.last_team_request_at >= 5.0:

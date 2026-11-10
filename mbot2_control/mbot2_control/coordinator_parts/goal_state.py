@@ -20,16 +20,22 @@ class GoalStateMixin:
             turn_back = False
             trail = self.trails.get(robot)
             if goal is not None and not pose['returning'] and trail is not None:
-                reach = self._graph_distances([goal['id']], robot, now)
                 behind = self.junctions.get(trail[0])
-                link = behind['branches'].get(trail[1], {}).get('leads_to') if behind else None
+                branch = behind['branches'].get(trail[1], {}) if behind else {}
+                link = branch.get('leads_to')
                 ahead = self.junctions.get(link['node']) if link else None
+                if ahead is not None and (
+                        branch['status'] == 'BLOCKED'
+                        or branch.get('hidden_by') not in (None, robot)
+                        or self._avoided(robot, behind['id'], trail[1], now)):
+                    ahead = None
 
                 def via(node):
-                    if node is None or node['id'] not in reach:
+                    if node is None:
                         return math.inf
+                    distances = self._graph_distances([node['id']], robot, now)
                     return (math.hypot(pose['x'] - node['x'], pose['y'] - node['y'])
-                            + reach[node['id']])
+                            + distances.get(goal['id'], math.inf))
                 # Unknown corridor ahead: go back whenever the way behind is known.
                 turn_back = via(behind) < via(ahead)
             orders.append({'type': 'GOAL_ROUTE', 'robot': robot, 'turn_back': turn_back})
@@ -98,22 +104,13 @@ class GoalStateMixin:
                 other = self.junctions.get(link['node'])
                 if other is None or other['id'] == skip_node:
                     continue
-                if skip_node is not None and branch.get('hidden_by') not in (None, robot):
+                if branch.get('hidden_by') not in (None, robot):
                     continue
                 step = cost + math.hypot(other['x'] - node['x'], other['y'] - node['y'])
                 if step < best.get(other['id'], math.inf):
                     best[other['id']] = step
                     heapq.heappush(queue, (step, other['id']))
         return best
-
-    def _distance_via(self, node, branch, reach):
-        """Length of this branch plus the mapped distance beyond it."""
-        link = branch.get('leads_to')
-        other = self.junctions.get(link['node']) if link else None
-        if other is None or other['id'] not in reach:
-            return math.inf
-        return (math.hypot(other['x'] - node['x'], other['y'] - node['y'])
-                + reach[other['id']])
 
     def cancel_branch(self, report):
         """Release a junction choice when its robot has to yield before moving."""

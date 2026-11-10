@@ -62,10 +62,11 @@ class TeamLedgerTest(unittest.TestCase):
         second = self.ledger.request_branch(request('mbot2', 'b'), 10.0)
         self.assertEqual('left', second['choice'])
 
-    def test_goal_biases_new_branch(self):
+    def test_disconnected_goal_allows_exploration_without_heading_bias(self):
         self.ledger.set_goal({'robot': 'mbot3', 'x': -2, 'y': 5})
         result = self.ledger.request_branch(request('mbot1', 'a'), 10.0)
-        self.assertEqual('left', result['choice'])
+        self.assertEqual('straight', result['choice'])
+        self.assertEqual('EXPLORE_GOAL_CONNECTION', result['reason'])
 
     def test_stale_claim_can_be_reused(self):
         self.ledger.request_branch(request('mbot1', 'a'), 10.0)

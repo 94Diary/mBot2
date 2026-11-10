@@ -148,8 +148,7 @@ class LineNavigationMixin:
         if details:
             self.get_logger().info(f"J{choice['junction_id']} ทีมจำไว้: " + ' | '.join(details))
         reason = {'UNEXPLORED_BRANCH': 'สำรวจกิ่งที่ยังไม่รู้ปลายทาง',
-                  'KNOWN_RETURN_ROUTE': 'ไม่เหลือกิ่งอื่นที่เปิด จึงย้อนทางเข้าเดิม',
-                  'TOWARD_GOAL': 'เดินไปทางเป้าหมายที่ทีมพบ',
+                  'EXPLORE_GOAL_CONNECTION': 'สำรวจทางเชื่อม: ยังไม่มีเส้นทางยืนยันถึงเป้าหมาย',
                   'ROUTE_TO_GOAL': 'ทางที่สั้นที่สุดไปเป้าหมายตามแผนที่',
                   'LIKELY_KNOWN_BRANCH': 'กิ่งที่น่าจะพาไปที่ที่ทีมรู้แล้ว',
                   'TOWARD_UNEXPLORED': 'ไปหาแยกที่ยังมีทางไม่ได้สำรวจที่ใกล้ที่สุด',
