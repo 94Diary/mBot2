@@ -50,6 +50,7 @@ class GoalStateMixin:
         peer = report.get('peer')
         self.avoid.setdefault(robot, {})[(node['id'], key)] = {
             'peer': peer, 'peer_trail': self.trails.get(peer), 'until': now + 60.0}
+        self.frontier_claims.pop(robot, None)
 
     def _avoided(self, robot, node_id, key, now):
         entry = self.avoid.get(robot, {}).get((node_id, key))
@@ -79,22 +80,9 @@ class GoalStateMixin:
                 return True
         return False
 
-    def _has_new_branch(self, node, robot, now):
-        if node['kind'] != 'JUNCTION':
-            return False
-        for key, branch in node['branches'].items():
-            owner = branch['owner']
-            busy = owner not in (None, robot) and self._live(owner, now)
-            if (branch['status'] != 'BLOCKED' and not branch['visited_by'] and not busy
-                    and branch.get('hidden_by') is None
-                    and not self._likely_known(node, key)):
-                return True
-        return False
-
-    def _graph_distances(self, sources, robot, now, with_origin=False):
+    def _graph_distances(self, sources, robot, now, skip_node=None):
         """Map distance from every node to the nearest of sources."""
         best = {source: 0.0 for source in sources}
-        origin = {source: source for source in sources}
         queue = [(0.0, source) for source in sources]
         heapq.heapify(queue)
         while queue:
@@ -108,14 +96,15 @@ class GoalStateMixin:
                         or self._avoided(robot, node_id, key, now)):
                     continue
                 other = self.junctions.get(link['node'])
-                if other is None:
+                if other is None or other['id'] == skip_node:
+                    continue
+                if skip_node is not None and branch.get('hidden_by') not in (None, robot):
                     continue
                 step = cost + math.hypot(other['x'] - node['x'], other['y'] - node['y'])
                 if step < best.get(other['id'], math.inf):
                     best[other['id']] = step
-                    origin[other['id']] = origin[node_id]
                     heapq.heappush(queue, (step, other['id']))
-        return (best, origin) if with_origin else best
+        return best
 
     def _distance_via(self, node, branch, reach):
         """Length of this branch plus the mapped distance beyond it."""
@@ -134,6 +123,7 @@ class GoalStateMixin:
         if decision is None or decision.get('direction') is None:
             return
         if self.trails.get(report['robot']) == (decision['junction_id'], decision['direction']):
+            self.frontier_claims.pop(report['robot'], None)
             # Asked ahead but never got there: the robot is still on its old leg.
             if previous_trail is None:
                 self.trails.pop(report['robot'], None)
@@ -191,6 +181,7 @@ class GoalStateMixin:
                        'yield_junction': p['yield_junction'],
                        'yield_escape_heading': p['yield_escape_heading'],
                        'blocked_behind': p.get('blocked_behind', False),
+                       'waiting_for': p.get('waiting_for'),
                        'junction_reached': name in self.junction_reached}
                 for name, p in self.robots.items()
                 if now - p['seen_at'] < PEER_TIMEOUT_SECONDS

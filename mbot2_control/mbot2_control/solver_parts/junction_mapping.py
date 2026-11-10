@@ -372,8 +372,9 @@ class JunctionMappingMixin:
         self.returning = False
         if self.team_enabled:
             self._request_team_branch(
-                True, node['right_open'], node['left_open'],
-                node['world_position'], approach_heading=world_h0)
+                True, 'left' in exits, 'right' in exits, node['world_position'],
+                straight_open='straight' in exits, approach_heading=world_h0,
+                exit_headings={name: world_h0 + theta for name, theta in exits.items()})
             self._change_state(JUNCTION_PAUSE)
             return
         name = next((n for n in ('left', 'right', 'straight') if n in exits))

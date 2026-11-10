@@ -52,7 +52,7 @@ class TeamLedger(MapAssignmentsMixin, BranchRoutesMixin, EncountersMixin, GoalSt
         self.next_encounter_id = 1
         # Corridors a robot gave up to a teammate it met head-on.
         self.avoid = {}
-        # Junction with a new branch each idle robot is being steered to.
+        # (Junction ID, direction) of the unknown branch a robot is heading toward.
         self.frontier_claims = {}
         # Trail before each granted request, restored if it is cancelled.
         self.request_trails = {}

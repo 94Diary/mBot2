@@ -104,15 +104,15 @@ class TeamDispatchTest(unittest.TestCase):
         self.assertEqual('ASSIGNED_BRANCH', result['reason'])
         self.assertIsNone(self.task_of('mbot2'))
 
-    def test_unreachable_task_uses_normal_ranking(self):
+    def test_unreachable_task_waits_when_no_other_work_remains(self):
         far = self.ledger._junction(5.0, 5.0)
         self.arm(far, EAST)
         for node, key in ((self.a, EAST), (self.b, NORTH)):  # the only task is far
-            node['branches'][key]['visited_by'] = ['mbot9']
+            node['branches'][key]['status'] = 'BLOCKED'
         self.place('mbot2', 0.0, -0.3, (self.j, SOUTH))
         self.ledger.assignments['mbot2'] = {'junction_id': far['id'], 'direction': EAST}
         result = self.ask('mbot2', self.j, math.pi / 2, [EAST, NORTH])
-        self.assertNotIn(result['reason'], ('TOWARD_ASSIGNED', 'ASSIGNED_BRANCH'))
+        self.assertIsNone(result['choice'])
 
     def test_state_lists_assignments(self):
         self.place('mbot1', 0.8, 0.0, (self.j, EAST))

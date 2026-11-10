@@ -51,7 +51,7 @@ class LineNavigationMixin:
         exit_headings = exit_headings or {}
         self.request_sequence += 1
         choices = []
-        if not returning and straight_open:
+        if straight_open and (not returning or 'straight' in exit_headings):
             choices.append({'name': 'straight',
                             'heading': exit_headings.get('straight', world[2])})
         if left_open:
@@ -62,7 +62,11 @@ class LineNavigationMixin:
                 'right', world[2] - math.pi / 2)})
         if offer_back:
             choices.append({'name': 'back', 'heading': world[2] + math.pi})
-        if returning and self.junctions:
+        if returning and exit_headings:
+            # A fresh scan is already relative to the current approach.
+            for option in choices:
+                option['fallback'] = option['name'] == 'back'
+        elif returning and self.junctions:
             node = self.junctions[-1]
             original = node.get('world_heading', world[2] + math.pi)
             measured = node.get('exit_headings', {})  # black-mode scan
@@ -88,11 +92,14 @@ class LineNavigationMixin:
             'choices': choices,
         }
         available = {option['name'] for option in choices}
+        source = ('จากสแกนขากลับ' if returning and exit_headings else
+                  'จากความจำกิ่งเดิม' if returning else
+                  'กิ่งข้างจาก RGB; หน้าตรงยังต้องสำรวจ')
         self.get_logger().info(
             f"แยก ({'ขากลับ' if returning else 'ขาไป'}; ทิศเทียบกับหน้ารถตอนนี้): "
             f"ซ้ายเปิด={'left' in available} หน้าเปิด={'straight' in available} "
             f"ขวาเปิด={'right' in available} "
-            f"[{'จากความจำกิ่งเดิม' if returning else 'กิ่งข้างจาก RGB; หน้าตรงยังต้องสำรวจ'}]")
+            f'[{source}]')
         self.team_choice = None
         self._team_report(self.pending_team_request)
         self.last_team_request_at = time.monotonic()
@@ -127,24 +134,28 @@ class LineNavigationMixin:
         labels = {'left': 'ซ้าย', 'right': 'ขวา', 'straight': 'หน้า', 'back': 'หลัง'}
         details = []
         for item in choice.get('branches', []):
-            status = ('ทางตัน' if item['status'] == 'BLOCKED' else
-                      ('เคยผ่าน/เลือกแล้ว:' + ','.join(item['visited_by'])
-                       if item['visited_by'] else
-                       'ยังไม่สำรวจ'))
+            if item['status'] == 'BLOCKED':
+                status = 'ทางตัน'
+            elif item.get('endpoint_known'):
+                status = 'รู้ปลายทางแล้ว'
+            elif item['visited_by']:
+                status = 'เคยเลือก/ผ่าน แต่ยังไม่รู้ปลายทาง'
+            else:
+                status = 'ยังไม่สำรวจ'
             if item.get('failed_attempts'):
                 status += f"/จับเส้นพลาด{item['failed_attempts']}ครั้ง"
             details.append(f"{labels[item['name']]}={status}")
         if details:
             self.get_logger().info(f"J{choice['junction_id']} ทีมจำไว้: " + ' | '.join(details))
-        reason = {'UNEXPLORED_BRANCH': 'สำรวจทางที่ยังไม่เคยไป',
+        reason = {'UNEXPLORED_BRANCH': 'สำรวจกิ่งที่ยังไม่รู้ปลายทาง',
                   'KNOWN_RETURN_ROUTE': 'ไม่เหลือกิ่งอื่นที่เปิด จึงย้อนทางเข้าเดิม',
-                  'REVISIT_OPEN_BRANCH': 'กิ่งที่เปิดเคยถูกเลือกแล้ว จึงใช้ทางเดิมต่อ',
                   'TOWARD_GOAL': 'เดินไปทางเป้าหมายที่ทีมพบ',
                   'ROUTE_TO_GOAL': 'ทางที่สั้นที่สุดไปเป้าหมายตามแผนที่',
                   'LIKELY_KNOWN_BRANCH': 'กิ่งที่น่าจะพาไปที่ที่ทีมรู้แล้ว',
                   'TOWARD_UNEXPLORED': 'ไปหาแยกที่ยังมีทางไม่ได้สำรวจที่ใกล้ที่สุด',
                   'ASSIGNED_BRANCH': 'สำรวจกิ่งที่ทีมจองให้',
                   'TOWARD_ASSIGNED': 'ไปหางานที่ทีมจองให้',
+                  'TAKE_QUEUED_TASK': 'รับงานต่อจากหุ่นที่รออยู่ด้านหลัง',
                   }.get(choice.get('reason'), 'ทีมเลือกทาง')
         self.get_logger().info(f'เลือก{label}ที่ J{choice["junction_id"]}: {reason}')
         self.pending_team_request = None

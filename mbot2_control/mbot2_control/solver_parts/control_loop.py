@@ -88,6 +88,12 @@ class ControlLoopMixin:
                                    'route_order': self.team_route_order,
                                    'returning': self.returning,
                                    'blocked_behind': self._peer_behind_close(),
+                                   'waiting_for': (self.clearance_peer['peer']
+                                                   if self.clearance_peer is not None
+                                                   and self.state in (
+                                                       SEARCH, FOLLOW, APPROACH_JUNCTION,
+                                                       CENTERING, RETURNING, YIELD_RESUME)
+                                                   else None),
                                    'yield_to': (self.yield_peer_name
                                                 if self.state == YIELDING else None),
                                    'yield_junction': (
@@ -795,8 +801,10 @@ class ControlLoopMixin:
                     if (self.team_choice is not None and
                             self.team_choice.get('choice') is None):
                         if not self.no_route_logged:
-                            self.get_logger().warning(
-                                'ทีมไม่พบกิ่งที่ยังเปิด: หยุดรอข้อมูลใหม่')
+                            message = ('ไม่มีกิ่งสำรวจที่ว่างและไปถึงได้: หยุดรอข้อมูลใหม่'
+                                       if self.team_choice.get('reason') == 'WAIT_FOR_FRONTIER'
+                                       else 'ทีมไม่พบกิ่งที่ยังเปิด: หยุดรอข้อมูลใหม่')
+                            self.get_logger().warning(message)
                             self.no_route_logged = True
                         if now - self.last_team_request_at >= 5.0:
                             self.request_sequence += 1

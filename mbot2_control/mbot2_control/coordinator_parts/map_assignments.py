@@ -30,6 +30,7 @@ class MapAssignmentsMixin:
             'yield_junction': report.get('yield_junction'),
             'yield_escape_heading': report.get('yield_escape_heading'),
             'blocked_behind': bool(report.get('blocked_behind', False)),
+            'waiting_for': report.get('waiting_for'),
             'route_order': route_order,
             'seen_at': now,
         }
@@ -56,8 +57,9 @@ class MapAssignmentsMixin:
             return False
         owner = branch['owner']
         busy = owner not in (None, robot) and self._live(owner, now)
-        return (branch['status'] != 'BLOCKED' and not branch['visited_by'] and not busy
-                and branch.get('hidden_by') is None and not self._likely_known(node, key))
+        return (branch['status'] != 'BLOCKED' and branch.get('leads_to') is None
+                and not branch.get('arrived_by') and not busy
+                and branch.get('hidden_by') is None)
 
     def _busy(self, robot):
         """Tell whether a robot is out exploring a new branch it took."""
@@ -113,6 +115,11 @@ class MapAssignmentsMixin:
                 mine = (math.inf if current is None else
                         distance(robot, (current['junction_id'], current['direction'])))
                 for task in tasks:
+                    if self._avoided(robot, *task, now):
+                        continue
+                    if any(other != robot and claim == task and self._live(other, now)
+                           for other, claim in self.frontier_claims.items()):
+                        continue
                     d = distance(robot, task)
                     holder = taken.get(task)
                     if current is not None:

@@ -345,13 +345,13 @@ class BlackJunctionScanTest(unittest.TestCase):
         self.assertFalse(node['straight_open'])  # the arm it came back from
         choices = self.branch_requests()[-1]['choices']
         new = [c for c in choices if not c['fallback']]
-        self.assertEqual(['left'], [c['name'] for c in new])
+        self.assertEqual(['straight', 'left'], [c['name'] for c in new])
         # Axle stops up to 2 cm short of the hit point, so the arm is seen
         # nearer 75° than 90°; the team still files it under the 90° sector.
-        self.assertAlmostEqual(math.pi / 2, new[0]['heading'], delta=0.35)
+        self.assertAlmostEqual(math.pi / 2, new[1]['heading'], delta=0.35)
         home = [c for c in choices if c['fallback']]
         self.assertAlmostEqual(0.0, maze_solver.angle_difference(
-            home[0]['heading'], 0.0), delta=0.1)
+            home[0]['heading'], math.pi), delta=0.1)
 
     def test_return_pivots_where_the_scan_pivoted(self):
         # Outward straight into a walled dead end, back, then into the left arm.
