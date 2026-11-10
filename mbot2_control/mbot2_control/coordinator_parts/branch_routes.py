@@ -206,6 +206,7 @@ class BranchRoutesMixin:
                       'reason': reason,
                       'route_order': route_order}
         result['branches'] = branch_details
+        result['routing_revision'] = self.routing_revision()
         self.decisions[token] = result
         return result
 

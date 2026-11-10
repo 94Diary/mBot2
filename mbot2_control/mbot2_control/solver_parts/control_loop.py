@@ -806,13 +806,9 @@ class ControlLoopMixin:
                                        else 'ยังไม่มีทางยืนยันถึงเป้าหมาย: หยุดรอข้อมูลใหม่')
                             self.get_logger().warning(message)
                             self.no_route_logged = True
-                        if now - self.last_team_request_at >= 5.0:
-                            self.request_sequence += 1
-                            self.pending_team_request['request_id'] = (
-                                f'{self.run_id}-{self.request_sequence}')
-                            self.team_choice = None
-                            self._team_report(self.pending_team_request)
-                            self.last_team_request_at = now
+                        if (self._team_choice_is_stale()
+                                or now - self.last_team_request_at >= 5.0):
+                            self._refresh_team_request()
                         self.cmd_pub.publish(cmd)
                         return
                     if not self._apply_team_choice():

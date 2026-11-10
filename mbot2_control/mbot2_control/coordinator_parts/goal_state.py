@@ -162,13 +162,28 @@ class GoalStateMixin:
         if self.goal is None:
             self.goal = {'robot': report['robot'],
                          'x': float(report['x']), 'y': float(report['y'])}
-            node = self._junction(self.goal['x'], self.goal['y'], 'GOAL')
-            if report.get('approach_heading') is not None:
-                self._link(report['robot'], node, report['approach_heading'])
+        node = self._junction(self.goal['x'], self.goal['y'], 'GOAL')
+        if report.get('approach_heading') is not None:
+            self._link(report['robot'], node, report['approach_heading'])
+
+    def routing_revision(self):
+        """Version graph changes that can invalidate a prefetched route."""
+        signature = (self.goal is not None, tuple(
+            (node['id'], node['kind'], tuple(
+                (key, branch.get('leads_to'), branch['status'] == 'BLOCKED',
+                 branch.get('hidden_by'), bool(branch.get('observed_exit')),
+                 bool(branch.get('arrived_by')))
+                for key, branch in node['branches'].items()))
+            for node in self.junctions.values()))
+        if signature != self._routing_signature:
+            self._routing_signature = signature
+            self._routing_revision += 1
+        return self._routing_revision
 
     def snapshot(self, now):
         return {
             'goal': self.goal,
+            'routing_revision': self.routing_revision(),
             'robots': {
                 name: {'x': p['x'], 'y': p['y'],
                        'heading': p['heading'], 'state': p['state'],

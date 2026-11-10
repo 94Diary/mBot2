@@ -285,6 +285,7 @@ class TeamMotionMixin:
         try:
             data = json.loads(msg.data)
             self.team_goal = data.get('goal')
+            self.team_routing_revision = data.get('routing_revision')
             self.team_nodes = data.get('junctions', [])
             self.team_peers = {
                 name: position for name, position in data.get('robots', {}).items()

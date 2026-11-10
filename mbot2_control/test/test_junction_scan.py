@@ -1271,6 +1271,27 @@ class BlackJunctionScanTest(unittest.TestCase):
         self.assertAlmostEqual(0.5, self.node.junctions[-1]['world_position'][0], delta=0.05)
         self.assertIsNotNone(self.node.active_team_branch)
 
+    def test_new_map_revision_cancels_straight_ahead_choice_before_using_it(self):
+        self.ahead_setup()
+        self.team_node('JUNCTION', math.pi, 0.0)
+        self.tick_ahead(100, until=lambda: bool(self.branch_requests()))
+        rid = self.branch_requests()[-1]['request_id']
+        self.node.team_choice = {
+            'choice': 'straight', 'junction_id': 7, 'direction': 0,
+            'request_id': rid, 'junction_x': 0.5, 'junction_y': 0.0,
+            'heading': 0.0, 'routing_revision': 1,
+        }
+        self.team_node('JUNCTION', math.pi, 0.0, math.pi / 2)
+        self.node.team_nodes[0]['branches']['1']['leads_to'] = {'node': 8, 'enter_dir': 3}
+        self.node.team_routing_revision = 2
+        self.tick_ahead(200, until=lambda: self.node.state == maze_solver.JUNCTION_PAUSE)
+
+        self.assertIn({'type': 'CANCEL_BRANCH', 'request_id': rid}, self.reports)
+        self.assertNotEqual(rid, self.branch_requests()[-1]['request_id'])
+        self.assertIn({'name': 'left', 'heading': math.pi / 2},
+                      self.branch_requests()[-1]['choices'])
+        self.assertEqual(maze_solver.JUNCTION_PAUSE, self.node.state)
+
     def test_turns_at_known_junction_without_scan_or_wait(self):
         self.ahead_setup()
         self.tick_ahead(400, answer=('left', math.pi / 2, 1),

@@ -104,9 +104,49 @@ class LineNavigationMixin:
         self._team_report(self.pending_team_request)
         self.last_team_request_at = time.monotonic()
 
+    def _team_choice_is_stale(self):
+        choice = self.team_choice
+        if choice is None or self.team_routing_revision is None:
+            return False
+        revision = choice.get('routing_revision')
+        return revision is not None and revision < self.team_routing_revision
+
+    def _refresh_team_request(self):
+        """Ask again at the same junction with any newly mapped exits."""
+        previous = self.pending_team_request
+        choice = self.team_choice
+        choices = list(previous['choices'])
+        node = next((n for n in self.team_nodes if n['id'] == choice['junction_id']), None)
+        if node is not None:
+            approach = previous['approach_heading']
+            for key, branch in node['branches'].items():
+                if branch.get('leads_to') is None:
+                    continue
+                heading = branch.get('heading', int(key) * math.pi / 2)
+                if any(abs(angle_difference(heading, c['heading'])) < math.pi / 4
+                       for c in choices):
+                    continue
+                turn = angle_difference(heading, approach)
+                name = ('straight' if abs(turn) < math.pi / 4 else
+                        'back' if abs(turn) > 3 * math.pi / 4 else
+                        'left' if turn > 0 else 'right')
+                choices.append({'name': name, 'heading': heading})
+        if choice.get('choice') is not None:
+            self._team_report({'type': 'CANCEL_BRANCH', 'request_id': previous['request_id']})
+        self.request_sequence += 1
+        self.pending_team_request = {**previous, 'choices': choices,
+                                     'request_id': f'{self.run_id}-{self.request_sequence}'}
+        self.team_choice = None
+        self._team_report(self.pending_team_request)
+        self.last_team_request_at = time.monotonic()
+
     def _apply_team_choice(self):
         choice = self.team_choice
         if choice is None or choice.get('choice') is None:
+            return False
+        if self._team_choice_is_stale():
+            self.get_logger().info('แผนที่เปลี่ยน: ขอคำนวณเส้นทางใหม่ที่แยก')
+            self._refresh_team_request()
             return False
         branch = choice['choice']
         self.active_team_branch = {

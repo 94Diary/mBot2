@@ -157,6 +157,7 @@ class MazeSolver(TeamMotionMixin, LineNavigationMixin, JunctionMappingMixin,
         self.active_team_branch = None
         self.active_junction_world = None
         self.team_goal = None
+        self.team_routing_revision = None
         self.team_peers = {}
         self.team_nodes = []  # shared map from /maze_team/state
         self.head_on_wait = None  # {'peer', 'since'} while the team decides

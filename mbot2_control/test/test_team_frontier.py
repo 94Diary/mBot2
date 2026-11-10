@@ -265,6 +265,40 @@ class TeamFrontierTest(unittest.TestCase):
         self.assertEqual('ROUTE_TO_GOAL',
                          self.ask('mbot1', j, math.pi / 2, [EAST])['reason'])
 
+    def test_shortcut_reported_after_goal_changes_next_junction_choice(self):
+        b, c, turn = self.node(0, 0), self.node(0, 2), self.node(1, 2)
+        goal = self.node(1, 0, 'GOAL')
+        self.join(b, NORTH, c, SOUTH)
+        self.join(c, EAST, turn, WEST)
+        self.ledger.trails['mbot2'] = (turn['id'], SOUTH)
+        self.ledger.set_goal({'robot': 'mbot2', 'x': 1.0, 'y': 0.0,
+                              'approach_heading': -math.pi / 2})
+        before = self.ask('mbot1', b, math.pi / 2, [EAST, NORTH])
+        self.assertEqual(NORTH, before['direction'])
+
+        self.ledger.trails['mbot3'] = (b['id'], EAST)
+        self.ledger.set_goal({'robot': 'mbot3', 'x': 1.0, 'y': 0.0,
+                              'approach_heading': 0.0})
+
+        after = self.ask('mbot1', b, math.pi / 2, [EAST, NORTH])
+        self.assertEqual(goal['id'], b['branches'][EAST]['leads_to']['node'])
+        self.assertEqual(EAST, after['direction'])
+        self.assertGreater(after['routing_revision'], before['routing_revision'])
+
+    def test_shortcut_already_mapped_when_goal_is_first_found(self):
+        b, c, d = self.node(0, 0), self.node(0, 2), self.node(1, 0)
+        self.join(b, NORTH, c, SOUTH)
+        self.join(c, EAST, d, NORTH)
+        self.join(b, EAST, d, WEST)
+        self.ledger.trails['mbot2'] = (d['id'], EAST)
+        self.ledger.set_goal({'robot': 'mbot2', 'x': 2.0, 'y': 0.0,
+                              'approach_heading': 0.0})
+
+        result = self.ask('mbot1', b, math.pi / 2, [NORTH, EAST])
+
+        self.assertEqual(EAST, result['direction'])
+        self.assertEqual('ROUTE_TO_GOAL', result['reason'])
+
     # Task C3: goal routes ------------------------------------------------
 
     def goal_map(self):

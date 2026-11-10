@@ -42,6 +42,8 @@ class TeamLedger(MapAssignmentsMixin, BranchRoutesMixin, EncountersMixin, GoalSt
         self.next_route_order = 1
         self.robots = {}
         self.goal = None
+        self._routing_revision = 0
+        self._routing_signature = None
         self.decisions = {}
         # Shared map: where each robot left its last node, and links that
         # contradicted an earlier one (kept out of the map, reported).
