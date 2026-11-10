@@ -1,0 +1,615 @@
+<?xml version="1.0" ?>
+<!-- mBot2 line maze | seed 7 | grid 6x6 @ 0.5 m
+     Black = path, Green = intersection, Red = goal
+     Suggested robot spawn: x=-1.25 y=-1.25 z=0.05 yaw=1.5708 -->
+<sdf version="1.6">
+  <world name="mbot2_maze">
+    <gravity>0 0 -9.8</gravity>
+    <scene>
+      <ambient>0.6 0.6 0.6 1</ambient>
+      <background>0.75 0.8 0.85 1</background>
+      <shadows>false</shadows>
+    </scene>
+
+    <light type="directional" name="sun">
+      <cast_shadows>false</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.9 0.9 0.9 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <direction>-0.3 0.2 -1</direction>
+    </light>
+
+    <model name="maze_floor">
+      <static>true</static>
+      <link name="floor">
+        <collision name="collision">
+          <pose>0 0 -0.005 0 0 0</pose>
+          <geometry><box><size>3.7 3.7 0.01</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
+        </collision>
+        <visual name="floor_visual">
+          <pose>0 0 -0.005 0 0 0</pose>
+          <geometry><box><size>3.7 3.7 0.01</size></box></geometry>
+          <material>
+            <ambient>0.95 0.95 0.95 1</ambient>
+            <diffuse>0.95 0.95 0.95 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="maze_lines">
+      <static>true</static>
+      <link name="lines">
+      <visual name="line_0">
+        <pose>-1.25 -1.0 0.001 0 0 0</pose>
+        <geometry><box><size>0.025 0.525 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_1">
+        <pose>-1.0 -1.25 0.001 0 0 0</pose>
+        <geometry><box><size>0.525 0.025 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_2">
+        <pose>-1.0 -0.75 0.001 0 0 0</pose>
+        <geometry><box><size>0.525 0.025 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_3">
+        <pose>-1.25 0.0 0.001 0 0 0</pose>
+        <geometry><box><size>0.025 0.525 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_4">
+        <pose>-1.25 0.5 0.001 0 0 0</pose>
+        <geometry><box><size>0.025 0.525 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_5">
+        <pose>-1.25 1.0 0.001 0 0 0</pose>
+        <geometry><box><size>0.025 0.525 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_6">
+        <pose>-1.0 0.75 0.001 0 0 0</pose>
+        <geometry><box><size>0.525 0.025 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_7">
+        <pose>-1.0 1.25 0.001 0 0 0</pose>
+        <geometry><box><size>0.525 0.025 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_8">
+        <pose>-0.5 -1.25 0.001 0 0 0</pose>
+        <geometry><box><size>0.525 0.025 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_9">
+        <pose>-0.75 -0.5 0.001 0 0 0</pose>
+        <geometry><box><size>0.025 0.525 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_10">
+        <pose>-0.75 0.0 0.001 0 0 0</pose>
+        <geometry><box><size>0.025 0.525 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_11">
+        <pose>-0.5 0.25 0.001 0 0 0</pose>
+        <geometry><box><size>0.525 0.025 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_12">
+        <pose>-0.5 0.75 0.001 0 0 0</pose>
+        <geometry><box><size>0.525 0.025 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_13">
+        <pose>-0.5 1.25 0.001 0 0 0</pose>
+        <geometry><box><size>0.525 0.025 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_14">
+        <pose>-0.25 -1.0 0.001 0 0 0</pose>
+        <geometry><box><size>0.025 0.525 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_15">
+        <pose>0.0 -1.25 0.001 0 0 0</pose>
+        <geometry><box><size>0.525 0.025 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_16">
+        <pose>-0.25 -0.5 0.001 0 0 0</pose>
+        <geometry><box><size>0.025 0.525 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_17">
+        <pose>0.0 0.25 0.001 0 0 0</pose>
+        <geometry><box><size>0.525 0.025 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_18">
+        <pose>-0.25 1.0 0.001 0 0 0</pose>
+        <geometry><box><size>0.025 0.525 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_19">
+        <pose>0.0 1.25 0.001 0 0 0</pose>
+        <geometry><box><size>0.525 0.025 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_20">
+        <pose>0.25 -1.0 0.001 0 0 0</pose>
+        <geometry><box><size>0.025 0.525 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_21">
+        <pose>0.5 -1.25 0.001 0 0 0</pose>
+        <geometry><box><size>0.525 0.025 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_22">
+        <pose>0.5 -0.75 0.001 0 0 0</pose>
+        <geometry><box><size>0.525 0.025 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_23">
+        <pose>0.25 0.0 0.001 0 0 0</pose>
+        <geometry><box><size>0.025 0.525 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_24">
+        <pose>0.5 -0.25 0.001 0 0 0</pose>
+        <geometry><box><size>0.525 0.025 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_25">
+        <pose>0.25 1.0 0.001 0 0 0</pose>
+        <geometry><box><size>0.025 0.525 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_26">
+        <pose>0.5 0.75 0.001 0 0 0</pose>
+        <geometry><box><size>0.525 0.025 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_27">
+        <pose>0.5 1.25 0.001 0 0 0</pose>
+        <geometry><box><size>0.525 0.025 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_28">
+        <pose>1.0 -1.25 0.001 0 0 0</pose>
+        <geometry><box><size>0.525 0.025 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_29">
+        <pose>1.0 -0.75 0.001 0 0 0</pose>
+        <geometry><box><size>0.525 0.025 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_30">
+        <pose>0.75 0.0 0.001 0 0 0</pose>
+        <geometry><box><size>0.025 0.525 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_31">
+        <pose>0.75 0.5 0.001 0 0 0</pose>
+        <geometry><box><size>0.025 0.525 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_32">
+        <pose>1.0 0.25 0.001 0 0 0</pose>
+        <geometry><box><size>0.525 0.025 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_33">
+        <pose>1.0 0.75 0.001 0 0 0</pose>
+        <geometry><box><size>0.525 0.025 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_34">
+        <pose>1.0 1.25 0.001 0 0 0</pose>
+        <geometry><box><size>0.525 0.025 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_35">
+        <pose>1.25 -0.5 0.001 0 0 0</pose>
+        <geometry><box><size>0.025 0.525 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_36">
+        <pose>1.25 0.0 0.001 0 0 0</pose>
+        <geometry><box><size>0.025 0.525 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="line_37">
+        <pose>1.25 0.5 0.001 0 0 0</pose>
+        <geometry><box><size>0.025 0.525 0.002</size></box></geometry>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.02 0.02 0.02 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_0_1_0">
+        <pose>-0.3312 -1.25 0.0015 0 0 0</pose>
+        <geometry><box><size>0.1625 0.025 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_0_2_1">
+        <pose>-0.25 -1.1687 0.0015 0 0 0</pose>
+        <geometry><box><size>0.025 0.1625 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_0_3_0">
+        <pose>-0.1688 -1.25 0.0015 0 0 0</pose>
+        <geometry><box><size>0.1625 0.025 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_1_3_1">
+        <pose>0.25 -1.1687 0.0015 0 0 0</pose>
+        <geometry><box><size>0.025 0.1625 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_1_4_0">
+        <pose>0.3312 -1.25 0.0015 0 0 0</pose>
+        <geometry><box><size>0.1625 0.025 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_1_2_0">
+        <pose>0.1688 -1.25 0.0015 0 0 0</pose>
+        <geometry><box><size>0.1625 0.025 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_2_5_3">
+        <pose>0.8313 0.25 0.0015 0 0 0</pose>
+        <geometry><box><size>0.1625 0.025 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_2_4_4">
+        <pose>0.75 0.3312 0.0015 0 0 0</pose>
+        <geometry><box><size>0.025 0.1625 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_2_4_2">
+        <pose>0.75 0.1688 0.0015 0 0 0</pose>
+        <geometry><box><size>0.025 0.1625 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_3_5_2">
+        <pose>1.25 0.1688 0.0015 0 0 0</pose>
+        <geometry><box><size>0.025 0.1625 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_3_5_4">
+        <pose>1.25 0.3312 0.0015 0 0 0</pose>
+        <geometry><box><size>0.025 0.1625 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_3_4_3">
+        <pose>1.1687 0.25 0.0015 0 0 0</pose>
+        <geometry><box><size>0.1625 0.025 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_4_1_4">
+        <pose>-1.1687 0.75 0.0015 0 0 0</pose>
+        <geometry><box><size>0.1625 0.025 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_4_0_3">
+        <pose>-1.25 0.6687 0.0015 0 0 0</pose>
+        <geometry><box><size>0.025 0.1625 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_4_0_5">
+        <pose>-1.25 0.8313 0.0015 0 0 0</pose>
+        <geometry><box><size>0.025 0.1625 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_5_5_4">
+        <pose>0.8313 0.75 0.0015 0 0 0</pose>
+        <geometry><box><size>0.1625 0.025 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_5_3_4">
+        <pose>0.6687 0.75 0.0015 0 0 0</pose>
+        <geometry><box><size>0.1625 0.025 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_5_4_3">
+        <pose>0.75 0.6687 0.0015 0 0 0</pose>
+        <geometry><box><size>0.025 0.1625 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_6_2_4">
+        <pose>-0.25 1.1687 0.0015 0 0 0</pose>
+        <geometry><box><size>0.025 0.1625 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_6_3_5">
+        <pose>-0.1688 1.25 0.0015 0 0 0</pose>
+        <geometry><box><size>0.1625 0.025 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_6_1_5">
+        <pose>-0.3312 1.25 0.0015 0 0 0</pose>
+        <geometry><box><size>0.1625 0.025 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_7_4_5">
+        <pose>0.3312 1.25 0.0015 0 0 0</pose>
+        <geometry><box><size>0.1625 0.025 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_7_2_5">
+        <pose>0.1688 1.25 0.0015 0 0 0</pose>
+        <geometry><box><size>0.1625 0.025 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="junction_7_3_4">
+        <pose>0.25 1.1687 0.0015 0 0 0</pose>
+        <geometry><box><size>0.025 0.1625 0.003</size></box></geometry>
+        <material>
+          <ambient>0.0 0.8 0.2 1</ambient>
+          <diffuse>0.0 0.8 0.2 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <visual name="goal">
+        <pose>-1.25 -0.25 0.0015 0 0 0</pose>
+        <geometry><box><size>0.14 0.14 0.003</size></box></geometry>
+        <material>
+          <ambient>0.9 0.05 0.05 1</ambient>
+          <diffuse>0.9 0.05 0.05 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      </link>
+    </model>
+  </world>
+</sdf>
