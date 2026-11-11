@@ -149,7 +149,7 @@ def generate_launch_description():
 
     pkg_share = get_package_share_directory('mbot2_description')
     xacro_file = os.path.join(pkg_share, 'urdf', 'mbot2.urdf.xacro')
-    world_file = os.path.join(pkg_share, 'worlds', 'mbot2_seed7_maze.sdf')
+    world_file = os.path.join(pkg_share, 'worlds', 'Map1_copy.sdf')
 
     set_sdf_path = SetEnvironmentVariable(
         'SDF_PATH',
