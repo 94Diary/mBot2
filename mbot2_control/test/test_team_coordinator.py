@@ -31,6 +31,17 @@ class TeamLedgerTest(unittest.TestCase):
         self.assertEqual(first['junction_x'], second['junction_x'])
         self.assertEqual(first['junction_y'], second['junction_y'])
 
+    def test_decision_names_world_entry_and_exit_directions(self):
+        report = request('mbot1', 'cardinal')
+        report['approach_heading'] = -math.pi / 2
+        report['choices'] = [{'name': 'left', 'heading': 2 * math.pi}]
+
+        result = self.ledger.request_branch(report, 10.0)
+
+        self.assertEqual('S', result['approach_cardinal'])
+        self.assertEqual('E', result['exit_cardinal'])
+        self.assertIsNone(result['next_node_id'])
+
     def test_duplicate_request_is_idempotent(self):
         first = self.ledger.request_branch(request('mbot1', 'a'), 10.0)
         repeat = self.ledger.request_branch(request('mbot1', 'a'), 11.0)
@@ -62,10 +73,11 @@ class TeamLedgerTest(unittest.TestCase):
         second = self.ledger.request_branch(request('mbot2', 'b'), 10.0)
         self.assertEqual('left', second['choice'])
 
-    def test_goal_biases_new_branch(self):
+    def test_disconnected_goal_allows_exploration_without_heading_bias(self):
         self.ledger.set_goal({'robot': 'mbot3', 'x': -2, 'y': 5})
         result = self.ledger.request_branch(request('mbot1', 'a'), 10.0)
-        self.assertEqual('left', result['choice'])
+        self.assertEqual('straight', result['choice'])
+        self.assertEqual('EXPLORE_GOAL_CONNECTION', result['reason'])
 
     def test_stale_claim_can_be_reused(self):
         self.ledger.request_branch(request('mbot1', 'a'), 10.0)

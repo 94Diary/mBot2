@@ -59,11 +59,11 @@ class TeamFrontierTest(unittest.TestCase):
         result = self.ask('mbot1', j, math.pi, [EAST, NORTH])
         self.assertEqual(NORTH, result['direction'])
 
-    def test_avoided_branch_used_when_nothing_else(self):
+    def test_waits_if_only_branch_is_temporarily_avoided(self):
         j = self.node(0, 0)
         self.release('mbot1', j, EAST)
         result = self.ask('mbot1', j, math.pi, [EAST])
-        self.assertEqual(EAST, result['direction'])
+        self.assertIsNone(result['choice'])
 
     def test_release_keeps_teammates_claim(self):
         j = self.node(0, 0)
@@ -79,7 +79,7 @@ class TeamFrontierTest(unittest.TestCase):
         self.arm(j, NORTH, visited=['mbot2'])
         self.release('mbot1', j, EAST)
         self.ledger.trails['mbot2'] = (j['id'], SOUTH)  # mbot2 left the corridor
-        result = self.ask('mbot1', j, math.pi, [EAST, NORTH])
+        result = self.ask('mbot1', j, math.pi / 2, [EAST, NORTH])
         self.assertEqual(EAST, result['direction'])
 
     # Task 2 ---------------------------------------------------------------
@@ -112,6 +112,101 @@ class TeamFrontierTest(unittest.TestCase):
         self.assertEqual(NORTH, result['direction'])
         self.assertEqual('TOWARD_UNEXPLORED', result['reason'])
 
+    def test_waits_until_the_only_unknown_branch_is_released(self):
+        j, k = self.node(0, 0), self.node(0, 1)
+        self.join(j, NORTH, k, SOUTH)
+        self.arm(j, EAST, status='BLOCKED')
+        self.arm(k, NORTH)
+        first = self.ask('mbot2', k, math.pi / 2, [NORTH])
+        self.assertEqual(NORTH, first['direction'])
+        self.assertIsNone(self.ask('mbot1', j, math.pi / 2, [NORTH, EAST])['choice'])
+        self.release('mbot2', k, NORTH, peer='mbot1')
+        self.assertEqual(NORTH, self.ask('mbot1', j, math.pi / 2, [NORTH, EAST])['direction'])
+
+    def test_does_not_leave_via_a_corridor_that_only_loops_back_to_the_task(self):
+        j, a, b = self.node(0, 0), self.node(1, 0), self.node(0, 1)
+        self.join(j, EAST, a, WEST)
+        self.join(j, NORTH, b, SOUTH)
+        self.arm(b, NORTH)
+        self.assertIsNone(self.ask('mbot1', j, math.pi / 2, [EAST])['choice'])
+
+    def test_unfinished_exit_stays_available_after_explorer_returns(self):
+        j = self.node(0, 0)
+        first = self.ask('mbot1', j, math.pi / 2, [EAST])
+        self.assertEqual(EAST, first['direction'])
+        self.release('mbot1', j, EAST, peer='mbot3')
+
+        # The first robot came back along the unfinished leg without linking it.
+        self.assertIsNone(self.ask('mbot1', j, math.pi, [EAST])['choice'])
+
+        second = self.ask('mbot2', j, math.pi / 2, [EAST])
+        self.assertEqual(EAST, second.get('direction'))
+        self.assertFalse(second['branches'][0]['endpoint_known'])
+
+    def test_back_is_valid_transit_to_reachable_work(self):
+        j, a = self.node(0, 0), self.node(-1, 0)
+        self.join(j, WEST, a, EAST)
+        self.arm(a, NORTH)
+        self.arm(j, NORTH, status='BLOCKED')
+        result = self.ledger.request_branch({
+            'robot': 'mbot1', 'request_id': 'back', 'x': 0.0, 'y': 0.0,
+            'approach_heading': 0.0,
+            'choices': [{'name': 'back', 'heading': math.pi},
+                        {'name': 'left', 'heading': math.pi / 2}],
+        }, 10.0)
+        self.assertEqual('back', result['choice'])
+        self.assertEqual('TOWARD_UNEXPLORED', result['reason'])
+
+    def test_front_robot_takes_work_reserved_by_the_fourth_robot_in_queue(self):
+        j, k = self.node(0, 0), self.node(0, 1)
+        self.join(j, NORTH, k, SOUTH)
+        self.arm(k, EAST)
+        for name, ahead in (('mbot2', 'mbot1'), ('mbot3', 'mbot2'), ('mbot4', 'mbot3')):
+            self.ledger.update_pose({'robot': name, 'x': 0.0, 'y': 0.0,
+                                     'waiting_for': ahead}, 10.0)
+        self.ledger.frontier_claims['mbot4'] = (k['id'], EAST)
+
+        result = self.ask('mbot1', j, math.pi / 2, [NORTH])
+
+        self.assertEqual(NORTH, result.get('direction'))
+        self.assertEqual('TAKE_QUEUED_TASK', result['reason'])
+        self.assertNotIn('mbot4', self.ledger.frontier_claims)
+        self.assertEqual(EAST, self.ledger.snapshot(10.0)['assignments']['mbot1']['direction'])
+
+    def test_front_robot_cannot_take_work_already_being_explored(self):
+        j, k = self.node(0, 0), self.node(0, 1)
+        self.join(j, NORTH, k, SOUTH)
+        self.arm(k, EAST)
+        self.assertEqual(EAST, self.ask('mbot2', k, math.pi / 2, [EAST])['direction'])
+        self.ledger.update_pose({'robot': 'mbot2', 'x': 0.0, 'y': 1.0,
+                                 'waiting_for': 'mbot1'}, 10.0)
+
+        self.assertIsNone(self.ask('mbot1', j, math.pi / 2, [NORTH])['choice'])
+
+    def test_front_robot_takes_assignment_from_blocked_follower(self):
+        j, k = self.node(0, 0), self.node(0, 1)
+        self.join(j, NORTH, k, SOUTH)
+        self.arm(k, EAST)
+        self.ledger.trails['mbot2'] = (j['id'], NORTH)
+        self.ledger.update_pose({'robot': 'mbot2', 'x': 0.0, 'y': 0.0,
+                                 'waiting_for': 'mbot1'}, 10.0)
+        self.assertIn('mbot2', self.ledger.snapshot(10.0)['assignments'])
+
+        result = self.ask('mbot1', j, math.pi / 2, [NORTH])
+
+        self.assertEqual('TAKE_QUEUED_TASK', result['reason'])
+        assignments = self.ledger.snapshot(10.0)['assignments']
+        self.assertNotIn('mbot2', assignments)
+        self.assertEqual({'junction_id': k['id'], 'direction': EAST}, assignments['mbot1'])
+
+    def test_robot_at_branch_can_take_en_route_reservation_but_not_active_claim(self):
+        j, k = self.node(0, 0), self.node(0, 1)
+        self.join(j, NORTH, k, SOUTH)
+        self.arm(k, EAST)
+        self.assertEqual(NORTH, self.ask('mbot2', j, math.pi / 2, [NORTH])['direction'])
+        self.assertEqual(EAST, self.ask('mbot1', k, -math.pi / 2, [EAST])['direction'])
+        self.assertIsNone(self.ask('mbot2', k, math.pi / 2, [EAST])['choice'])
+
     def test_frontier_route_skips_blocked(self):
         j, a, b = self.visited_cross()
         j['branches'][NORTH]['status'] = 'BLOCKED'
@@ -130,16 +225,81 @@ class TeamFrontierTest(unittest.TestCase):
         result = self.ask('mbot1', j, -math.pi / 2, [EAST, NORTH])
         self.assertEqual(NORTH, result['direction'])
         self.assertEqual('ROUTE_TO_GOAL', result['reason'])
+        self.assertEqual('N', result['exit_cardinal'])
+        self.assertEqual(b['id'], result['next_node_id'])
         self.release('mbot1', j, NORTH)
         result = self.ask('mbot1', j, -math.pi / 2, [EAST, NORTH])
         self.assertEqual(EAST, result['direction'])
 
-    def test_goal_not_on_map_uses_heading(self):
-        j, a, b = self.visited_cross()
-        self.ledger.goal = {'robot': 'mbot2', 'x': 3.0, 'y': 0.0}
-        result = self.ask('mbot1', j, -math.pi / 2, [EAST, NORTH])
+    def test_goal_waits_when_only_mapped_dead_end_points_toward_it(self):
+        j, dead = self.node(0, 0), self.node(1, 0, 'DEAD_END')
+        self.join(j, EAST, dead, WEST)
+        self.ledger.set_goal({'robot': 'mbot2', 'x': 2.0, 'y': 0.0})
+        result = self.ask('mbot1', j, math.pi / 2, [EAST])
+        self.assertIsNone(result['choice'])
+        self.assertEqual('WAIT_FOR_GOAL_ROUTE', result['reason'])
+
+    def test_goal_route_can_use_back_without_entering_dead_end(self):
+        j, dead, west = self.node(0, 0), self.node(1, 0, 'DEAD_END'), self.node(-1, 0)
+        self.ledger.set_goal({'robot': 'mbot2', 'x': 2.0, 'y': 0.0})
+        goal = next(n for n in self.ledger.junctions.values() if n['kind'] == 'GOAL')
+        self.join(j, EAST, dead, WEST)
+        self.join(j, WEST, west, EAST)
+        self.join(west, NORTH, goal, WEST)
+        result = self.ledger.request_branch({
+            'robot': 'mbot1', 'request_id': 'goal-back', 'x': 0.0, 'y': 0.0,
+            'approach_heading': 0.0,
+            'choices': [{'name': 'straight', 'heading': 0.0},
+                        {'name': 'back', 'heading': math.pi}],
+        }, 10.0)
+        self.assertEqual('back', result['choice'])
+        self.assertEqual('ROUTE_TO_GOAL', result['reason'])
+
+    def test_goal_route_respects_blocked_edge_in_direction_of_travel(self):
+        j, k = self.node(0, 0), self.node(1, 0)
+        self.ledger.set_goal({'robot': 'mbot2', 'x': 2.0, 'y': 0.0})
+        goal = next(n for n in self.ledger.junctions.values() if n['kind'] == 'GOAL')
+        self.join(j, EAST, k, WEST)
+        self.join(k, EAST, goal, WEST)
+        k['branches'][EAST]['status'] = 'BLOCKED'
+        self.assertIsNone(self.ask('mbot1', j, math.pi / 2, [EAST])['choice'])
+        k['branches'][EAST]['status'] = 'OPEN'
+        self.assertEqual('ROUTE_TO_GOAL',
+                         self.ask('mbot1', j, math.pi / 2, [EAST])['reason'])
+
+    def test_shortcut_reported_after_goal_changes_next_junction_choice(self):
+        b, c, turn = self.node(0, 0), self.node(0, 2), self.node(1, 2)
+        goal = self.node(1, 0, 'GOAL')
+        self.join(b, NORTH, c, SOUTH)
+        self.join(c, EAST, turn, WEST)
+        self.ledger.trails['mbot2'] = (turn['id'], SOUTH)
+        self.ledger.set_goal({'robot': 'mbot2', 'x': 1.0, 'y': 0.0,
+                              'approach_heading': -math.pi / 2})
+        before = self.ask('mbot1', b, math.pi / 2, [EAST, NORTH])
+        self.assertEqual(NORTH, before['direction'])
+
+        self.ledger.trails['mbot3'] = (b['id'], EAST)
+        self.ledger.set_goal({'robot': 'mbot3', 'x': 1.0, 'y': 0.0,
+                              'approach_heading': 0.0})
+
+        after = self.ask('mbot1', b, math.pi / 2, [EAST, NORTH])
+        self.assertEqual(goal['id'], b['branches'][EAST]['leads_to']['node'])
+        self.assertEqual(EAST, after['direction'])
+        self.assertGreater(after['routing_revision'], before['routing_revision'])
+
+    def test_shortcut_already_mapped_when_goal_is_first_found(self):
+        b, c, d = self.node(0, 0), self.node(0, 2), self.node(1, 0)
+        self.join(b, NORTH, c, SOUTH)
+        self.join(c, EAST, d, NORTH)
+        self.join(b, EAST, d, WEST)
+        self.ledger.trails['mbot2'] = (d['id'], EAST)
+        self.ledger.set_goal({'robot': 'mbot2', 'x': 2.0, 'y': 0.0,
+                              'approach_heading': 0.0})
+
+        result = self.ask('mbot1', b, math.pi / 2, [NORTH, EAST])
+
         self.assertEqual(EAST, result['direction'])
-        self.assertEqual('TOWARD_GOAL', result['reason'])
+        self.assertEqual('ROUTE_TO_GOAL', result['reason'])
 
     # Task C3: goal routes ------------------------------------------------
 

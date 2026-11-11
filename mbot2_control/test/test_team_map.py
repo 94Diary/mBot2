@@ -69,7 +69,7 @@ class TeamMapTest(unittest.TestCase):
     def test_conflicting_link_keeps_first(self):
         j1, _ = self.junction('mbot1', 0.0, 0.0, 0.0, 0.0)
         j2, _ = self.junction('mbot1', 0.5, 0.0, 0.0, 0.0)
-        self.junction('mbot2', 0.0, 0.0, 0.0, 0.0)
+        self.ledger.trails['mbot2'] = (j1['id'], EAST)
         j3, _ = self.junction('mbot2', 1.5, 0.0, 0.0, 0.0)
         self.assertEqual(j2['id'], self.leads(j1, EAST)['node'])
         self.assertEqual(1, len(self.ledger.link_conflicts))
@@ -100,7 +100,7 @@ class TeamMapTest(unittest.TestCase):
         # mbot1 drove P -> C without noticing J between them; mbot2 sees J.
         p, _ = self.junction('mbot1', 0.0, 0.0, 0.0, 0.0)
         c = self.node('mbot1', 'CORNER', 1.0, 0.0, 0.0, exit_heading=math.pi / 2)
-        self.junction('mbot2', 0.0, 0.0, 0.0, 0.0)
+        self.ledger.trails['mbot2'] = (p['id'], EAST)
         j, _ = self.junction('mbot2', 0.5, 0.0, 0.0, 0.0)
         self.assertEqual(j['id'], self.leads(p, EAST)['node'])
         self.assertEqual(c['id'], self.leads(j, EAST)['node'])
