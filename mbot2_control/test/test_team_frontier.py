@@ -225,6 +225,8 @@ class TeamFrontierTest(unittest.TestCase):
         result = self.ask('mbot1', j, -math.pi / 2, [EAST, NORTH])
         self.assertEqual(NORTH, result['direction'])
         self.assertEqual('ROUTE_TO_GOAL', result['reason'])
+        self.assertEqual('N', result['exit_cardinal'])
+        self.assertEqual(b['id'], result['next_node_id'])
         self.release('mbot1', j, NORTH)
         result = self.ask('mbot1', j, -math.pi / 2, [EAST, NORTH])
         self.assertEqual(EAST, result['direction'])

@@ -5,6 +5,7 @@ import math
 import time
 from std_msgs.msg import String
 from .config import (
+    RETURN_MARKER_RADIUS_M,
     APPROACH_SPEED,
     REVERSE_SPEED,
     OBSTACLE_STOP_DISTANCE_M,
@@ -27,6 +28,7 @@ from .config import (
     BRANCH_CAPTURE,
     TURNING,
     ALIGN_LINE,
+    TURN_TOLERANCE_RAD,
     RETURNING,
     LINE_LOST,
     YIELDING,
@@ -50,6 +52,7 @@ class LineNavigationMixin:
             world = (world[0], world[1], approach_heading)
         exit_headings = exit_headings or {}
         self.request_sequence += 1
+        self.no_route_logged = False
         choices = []
         if straight_open and (not returning or 'straight' in exit_headings):
             choices.append({'name': 'straight',
@@ -168,8 +171,10 @@ class LineNavigationMixin:
             math.pi / 2 if branch == 'left' else
             -math.pi / 2 if branch == 'right' else
             math.pi if branch == 'back' else 0.0)
+        self.branch_target_yaw = None
         if 'heading' in choice:
             self.branch_angle = angle_difference(float(choice['heading']), self._world_pose()[2])
+            self.branch_target_yaw = self.pose[2] + self.branch_angle
         label = {'left': 'ซ้าย', 'right': 'ขวา', 'straight': 'ตรง', 'back': 'กลับทางเดิม'}[branch]
         labels = {'left': 'ซ้าย', 'right': 'ขวา', 'straight': 'หน้า', 'back': 'หลัง'}
         details = []
@@ -196,7 +201,14 @@ class LineNavigationMixin:
                   'TOWARD_ASSIGNED': 'ไปหางานที่ทีมจองให้',
                   'TAKE_QUEUED_TASK': 'รับงานต่อจากหุ่นที่รออยู่ด้านหลัง',
                   }.get(choice.get('reason'), 'ทีมเลือกทาง')
-        self.get_logger().info(f'เลือก{label}ที่ J{choice["junction_id"]}: {reason}')
+        exit_cardinal = choice.get('exit_cardinal')
+        compass = ''
+        if exit_cardinal is not None:
+            approach = choice.get('approach_cardinal') or '?'
+            next_id = choice.get('next_node_id')
+            next_label = f'J{next_id}' if next_id is not None else 'ยังไม่รู้ปลายกิ่ง'
+            compass = f' [ทิศโลก เข้า {approach} → ออก {exit_cardinal}, ถัดไป {next_label}]'
+        self.get_logger().info(f'เลือก{label}ที่ J{choice["junction_id"]}: {reason}{compass}')
         self.pending_team_request = None
         self.team_choice = None
         self.no_route_logged = False
@@ -221,13 +233,19 @@ class LineNavigationMixin:
         self._leave_junction_center()
 
     def _leave_junction_center(self):
+        target = self.branch_target_yaw
+        self.branch_target_yaw = None
+        if target is not None:
+            self.branch_angle = angle_difference(target, self.pose[2])
+            if abs(self.branch_angle) <= TURN_TOLERANCE_RAD:
+                self.branch_angle = 0.0
         if self.branch_angle == 0.0:
             # Cross the marker without treating its yellow centre as
             # a lost line; the new straight segment begins ahead.
             self.returning = False
             self.wait_for_yellow_clear = True
             self._new_segment()
-            self.branch_capture_heading = self.pose[2]
+            self.branch_capture_heading = self.pose[2] if target is None else target
             self.branch_capture_start_distance = self.distance_total
             self._change_state(BRANCH_CAPTURE)
         else:
@@ -252,11 +270,11 @@ class LineNavigationMixin:
         node = self.junctions[-1]
         sx, sy = self._sensor_position()
         jx, jy = node['position']
-        heading = node['heading']
+        heading = self.pose[2]
         dx, dy = sx - jx, sy - jy
-        along_original_heading = dx * math.cos(heading) + dy * math.sin(heading)
+        along = dx * math.cos(heading) + dy * math.sin(heading)
         sideways = -dx * math.sin(heading) + dy * math.cos(heading)
-        return (along_original_heading <= 0.02
+        return (-0.02 <= along <= RETURN_MARKER_RADIUS_M
                 and abs(sideways) <= JUNCTION_LATERAL_TOLERANCE_M)
 
     def _trail_event(self, status):
@@ -308,6 +326,7 @@ class LineNavigationMixin:
         self.outer_hit_sides = set()
 
     def _start_turn(self, angle, after, kind):
+        self.branch_target_yaw = None
         if self.pose is None:
             self.get_logger().warning('ยังไม่มี odom: รอข้อมูลก่อนเริ่มหมุน')
             return

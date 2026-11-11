@@ -4,6 +4,7 @@ import math
 import time
 from geometry_msgs.msg import Twist
 from .config import (
+    TURN_TOLERANCE_RAD,
     ROTATE_SPEED,
     RGB_FRONT_OFFSET_M,
     JUNCTION_ESCAPE_DISTANCE_M,
@@ -123,6 +124,11 @@ class JunctionMappingMixin:
             along = dx * math.cos(yaw) + dy * math.sin(yaw)
             lateral = abs(-dx * math.sin(yaw) + dy * math.cos(yaw))
             if 0.05 <= along <= LOOKAHEAD_M and lateral <= 0.05:
+                # Asking ahead commits a branch in the ledger. Leave unfinished
+                # work available to any teammate already at this junction.
+                if any(branch.get('leads_to') is None and branch['status'] != 'BLOCKED'
+                       for branch in node['branches'].values()):
+                    return
                 self.scan_hits = {'straight': [], 'left': [], 'right': []}
                 for key, branch in node['branches'].items():
                     heading = branch.get('heading', int(key) * math.pi / 2)
@@ -173,7 +179,8 @@ class JunctionMappingMixin:
         self.trigger_resume_distance = self.distance_total + JUNCTION_ESCAPE_DISTANCE_M
         center = self.outer_hit_position
         if self.team_choice is not None and self._apply_team_choice():
-            if abs(self.branch_angle) < 0.35:
+            if abs(self.branch_angle) <= TURN_TOLERANCE_RAD:
+                self.branch_target_yaw = None
                 self.get_logger().info(f"ผ่าน J{node['id']} ตรงไปโดยไม่หยุด")
                 self.outer_hit_position = None
                 return True

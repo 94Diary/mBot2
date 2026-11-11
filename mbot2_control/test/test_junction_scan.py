@@ -326,6 +326,39 @@ class BlackJunctionScanTest(unittest.TestCase):
                           if not c['fallback'])
         self.assertEqual([0.05, 1.40], headings)
 
+    def test_returning_from_a_side_branch_reaches_the_actual_junction_plane(self):
+        self.node.junctions = [{'position': (0.0, 0.0), 'heading': 0.0}]
+        offset = maze_solver.RGB_FRONT_OFFSET_M
+        self.node._update_pose(0.0, offset + 0.10, -math.pi / 2)
+        self.assertFalse(self.node._return_reached_junction())
+        self.node._update_pose(0.0, offset, -math.pi / 2)
+        self.assertTrue(self.node._return_reached_junction())
+
+    def test_team_exit_heading_survives_centering_in_a_rotated_odom_frame(self):
+        self.use_team()
+        self.node.use_ground_truth = False
+        self.node.odom_origin = (0.0, 0.0, 0.0)
+        self.node.spawn_pose = (0.0, 0.0, math.pi / 2)
+        for approach, exit_heading, name in (
+                (0.0, math.pi / 2, 'straight'),
+                (0.0, math.pi, 'left'),
+                (math.pi, math.pi, 'right'),
+                (math.pi, math.pi / 2, 'back')):
+            with self.subTest(approach=approach, branch=name):
+                self.node._update_pose(0.0, 0.0, approach)
+                self.node.team_choice = {
+                    'choice': name, 'heading': exit_heading, 'direction': 0,
+                    'junction_id': 7, 'request_id': 'route',
+                    'junction_x': 0.0, 'junction_y': 0.0,
+                }
+                self.assertTrue(self.node._apply_team_choice())
+                # Centering can change yaw after the branch was selected.
+                self.node._update_pose(0.0, 0.0, approach + 0.15)
+                self.node._leave_junction_center()
+                world_target = self.node.turn_target + math.pi / 2
+                self.assertAlmostEqual(0.0, maze_solver.angle_difference(
+                    exit_heading, world_target))
+
     def test_corner_while_returning_keeps_returning(self):
         self.node.returning = True
         self.drive([INBOUND, LEFT], state=maze_solver.RETURNING,
@@ -875,6 +908,20 @@ class BlackJunctionScanTest(unittest.TestCase):
         self.assertEqual(0.0, self.robot.sent[-1].linear.x)
         self.assertEqual(maze_solver.FOLLOW, self.node.state)
 
+    def test_branch_capture_waits_for_peer_in_the_new_direction(self):
+        x = self.node.pose[0]
+        self.clearance_setup(x + 0.22, 0.15, math.pi / 2, state=maze_solver.TURNING)
+        self.node.junctions = [{'position': (x, 0.0)}]
+        self.node.branch_capture_heading = self.node.pose[2]
+        self.node.branch_capture_start_distance = self.node.distance_total
+        self.node._change_state(maze_solver.BRANCH_CAPTURE)
+        self.robot.tick()
+        self.assertEqual(0.0, self.robot.sent[-1].linear.x)
+        self.assertEqual(maze_solver.BRANCH_CAPTURE, self.node.state)
+        self.node.team_peers.clear()
+        self.robot.tick()
+        self.assertGreater(self.robot.sent[-1].linear.x, 0.0)
+
     def test_goes_once_peer_has_cleared(self):
         x = self.node.pose[0]
         self.clearance_setup(x + 0.17, 0.30, math.pi / 2)
@@ -921,6 +968,18 @@ class BlackJunctionScanTest(unittest.TestCase):
         for _ in range(int(maze_solver.PEER_WAIT_TURN_BACK_SECONDS * 10) + 20):
             self.robot.tick()
         self.assertEqual(maze_solver.FOLLOW, self.node.state)
+
+    def test_peer_waiting_for_route_allows_clear_follower_to_turn_back(self):
+        x = self.node.pose[0]
+        self.clearance_setup(x + 0.25, 0.0, 0.0, state=maze_solver.JUNCTION_PAUSE)
+        self.node.team_peers['mbot0']['route_waiting'] = True
+        ticks = int(maze_solver.PEER_WAIT_TURN_BACK_SECONDS * 10) + 20
+        for _ in range(ticks):
+            self.robot.tick()
+            if self.node.state == maze_solver.TURNING:
+                break
+        self.assertEqual(maze_solver.TURNING, self.node.state)
+        self.assertEqual(maze_solver.RETURNING, self.node.turn_after)
 
     def test_stuck_peer_ahead_clearance_turns_back(self):
         x = self.node.pose[0]
@@ -1232,9 +1291,14 @@ class BlackJunctionScanTest(unittest.TestCase):
 
     # C2 stage 1: ask ahead at known junctions -------------------------------
 
+    def mapped_ahead_junction(self, *headings):
+        self.team_node('JUNCTION', *headings)
+        for key, branch in self.node.team_nodes[0]['branches'].items():
+            branch['leads_to'] = {'node': 8 + int(key), 'enter_dir': (int(key) + 2) % 4}
+
     def ahead_setup(self):
         self.use_team()
-        self.team_node('JUNCTION', math.pi, 0.0, math.pi / 2)
+        self.mapped_ahead_junction(math.pi, 0.0, math.pi / 2)
         self.robot = FloorHarness(self.node, [INBOUND, STRAIGHT, LEFT], self.clock)
         self.node._change_state(maze_solver.FOLLOW)
         self.states = []
@@ -1260,6 +1324,16 @@ class BlackJunctionScanTest(unittest.TestCase):
         self.assertEqual(maze_solver.FOLLOW, self.node.state)
         self.assertLess(self.node._sensor_position()[0], 0.5)
 
+    def test_unknown_exit_is_requested_only_on_reaching_the_junction(self):
+        self.ahead_setup()
+        self.node.team_nodes[0]['branches']['1']['leads_to'] = None
+        self.tick_ahead(200, until=lambda: bool(self.branch_requests()))
+
+        self.assertEqual(maze_solver.JUNCTION_PAUSE, self.node.state)
+        self.assertAlmostEqual(0.5, self.node._axle_point(self.node.pose)[0], delta=0.04)
+        self.assertIsNone(self.node.ahead_request)
+        self.assertIn('left', {choice['name'] for choice in self.branch_requests()[-1]['choices']})
+
     def test_passes_straight_without_stopping(self):
         self.ahead_setup()
         self.tick_ahead(200, answer=('straight', 0.0, 0),
@@ -1273,7 +1347,7 @@ class BlackJunctionScanTest(unittest.TestCase):
 
     def test_new_map_revision_cancels_straight_ahead_choice_before_using_it(self):
         self.ahead_setup()
-        self.team_node('JUNCTION', math.pi, 0.0)
+        self.mapped_ahead_junction(math.pi, 0.0)
         self.tick_ahead(100, until=lambda: bool(self.branch_requests()))
         rid = self.branch_requests()[-1]['request_id']
         self.node.team_choice = {
@@ -1329,7 +1403,7 @@ class BlackJunctionScanTest(unittest.TestCase):
     def test_hit_short_of_asked_junction_cancels_ahead_request(self):
         # A corner the map does not know sits 0.2 m before the junction asked about.
         self.use_team()
-        self.team_node('JUNCTION', math.pi, 0.0, math.pi / 2)
+        self.mapped_ahead_junction(math.pi, 0.0, math.pi / 2)
         self.robot = FloorHarness(self.node, [(-1.0, 0.0, 0.3, 0.0), (0.3, 0.0, 0.3, 0.5)],
                                   self.clock)
         self.node._change_state(maze_solver.FOLLOW)

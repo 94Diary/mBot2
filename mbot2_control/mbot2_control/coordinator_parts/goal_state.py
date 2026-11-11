@@ -193,6 +193,7 @@ class GoalStateMixin:
                        'yield_junction': p['yield_junction'],
                        'yield_escape_heading': p['yield_escape_heading'],
                        'blocked_behind': p.get('blocked_behind', False),
+                       'route_waiting': p.get('route_waiting', False),
                        'waiting_for': p.get('waiting_for'),
                        'junction_reached': name in self.junction_reached}
                 for name, p in self.robots.items()

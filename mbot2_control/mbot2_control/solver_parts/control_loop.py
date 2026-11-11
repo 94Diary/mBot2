@@ -88,11 +88,14 @@ class ControlLoopMixin:
                                    'route_order': self.team_route_order,
                                    'returning': self.returning,
                                    'blocked_behind': self._peer_behind_close(),
+                                   'route_waiting': (self.state == JUNCTION_PAUSE
+                                                     and self.no_route_logged),
                                    'waiting_for': (self.clearance_peer['peer']
                                                    if self.clearance_peer is not None
                                                    and self.state in (
                                                        SEARCH, FOLLOW, APPROACH_JUNCTION,
-                                                       CENTERING, RETURNING, YIELD_RESUME)
+                                                       CENTERING, RETURNING, BRANCH_CAPTURE,
+                                                       YIELD_RESUME)
                                                    else None),
                                    'yield_to': (self.yield_peer_name
                                                 if self.state == YIELDING else None),
@@ -168,17 +171,22 @@ class ControlLoopMixin:
             return
 
         if (self.team_enabled and self.state in
-                (SEARCH, FOLLOW, APPROACH_JUNCTION, CENTERING, RETURNING, YIELD_RESUME)):
+                (SEARCH, FOLLOW, APPROACH_JUNCTION, CENTERING, RETURNING, BRANCH_CAPTURE,
+                 YIELD_RESUME)):
             blocker = self._clearance_peer()
             if blocker is not None:
+                peer = self.team_peers[blocker]
+                waiting_for_route = (peer.get('state') == JUNCTION_PAUSE
+                                     and peer.get('route_waiting', False))
                 if self.clearance_peer is None or self.clearance_peer['peer'] != blocker:
                     self.get_logger().info(f'รอ {blocker} ที่อยู่ข้างหน้าออกไปก่อน')
                     self.clearance_peer = {'peer': blocker, 'since': now}
-                elif self.team_peers[blocker].get('state') in PIVOTING_STATES:
+                elif peer.get('state') in PIVOTING_STATES and not waiting_for_route:
                     self.clearance_peer['since'] = now  # busy at a junction, not stuck
                 elif (self.state != SEARCH and not self.head_on_hiding
                       and not self.returning
-                      and now - self.clearance_peer['since'] > PEER_WAIT_TURN_BACK_SECONDS):
+                      and now - self.clearance_peer['since'] > PEER_WAIT_TURN_BACK_SECONDS
+                      and not self._peer_behind_close()):
                     # It is not moving on: leave this corridor to it.
                     self.clearance_peer = None
                     self._begin_turn_back(blocker)

@@ -3,6 +3,7 @@
 import heapq
 import math
 from .config import (
+    CARDINAL_DIRECTIONS,
     PEER_TIMEOUT_SECONDS,
     direction_key,
 )
@@ -114,11 +115,15 @@ class BranchRoutesMixin:
 
         node = self._junction(float(report['x']), float(report['y']))
         inbound_key = None
-        if report.get('approach_heading') is not None:
-            self._link(robot, node, report['approach_heading'])
+        approach_heading = report.get('approach_heading')
+        approach_cardinal = None
+        if approach_heading is not None:
+            approach_heading = float(approach_heading)
+            approach_cardinal = CARDINAL_DIRECTIONS[direction_key(approach_heading)]
+            self._link(robot, node, approach_heading)
         # An arrival alone does not prove where the corridor leads.
-        if report.get('approach_heading') is not None:
-            inbound_key = direction_key(float(report['approach_heading']) + math.pi)
+        if approach_heading is not None:
+            inbound_key = direction_key(approach_heading + math.pi)
             inbound = node['branches'].setdefault(
                 inbound_key, {'status': 'OPEN', 'owner': None, 'visited_by': []})
             arrived = inbound.setdefault('arrived_by', [])
@@ -203,6 +208,9 @@ class BranchRoutesMixin:
                       'heading': float(option['heading']),
                       'junction_x': node['x'], 'junction_y': node['y'],
                       'direction': key, 'shared': shared,
+                      'approach_cardinal': approach_cardinal,
+                      'exit_cardinal': CARDINAL_DIRECTIONS[key],
+                      'next_node_id': (branch.get('leads_to') or {}).get('node'),
                       'reason': reason,
                       'route_order': route_order}
         result['branches'] = branch_details

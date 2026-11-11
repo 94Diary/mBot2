@@ -30,6 +30,7 @@ class MapAssignmentsMixin:
             'yield_junction': report.get('yield_junction'),
             'yield_escape_heading': report.get('yield_escape_heading'),
             'blocked_behind': bool(report.get('blocked_behind', False)),
+            'route_waiting': bool(report.get('route_waiting', False)),
             'waiting_for': report.get('waiting_for'),
             'route_order': route_order,
             'seen_at': now,

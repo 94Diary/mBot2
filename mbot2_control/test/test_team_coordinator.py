@@ -31,6 +31,17 @@ class TeamLedgerTest(unittest.TestCase):
         self.assertEqual(first['junction_x'], second['junction_x'])
         self.assertEqual(first['junction_y'], second['junction_y'])
 
+    def test_decision_names_world_entry_and_exit_directions(self):
+        report = request('mbot1', 'cardinal')
+        report['approach_heading'] = -math.pi / 2
+        report['choices'] = [{'name': 'left', 'heading': 2 * math.pi}]
+
+        result = self.ledger.request_branch(report, 10.0)
+
+        self.assertEqual('S', result['approach_cardinal'])
+        self.assertEqual('E', result['exit_cardinal'])
+        self.assertIsNone(result['next_node_id'])
+
     def test_duplicate_request_is_idempotent(self):
         first = self.ledger.request_branch(request('mbot1', 'a'), 10.0)
         repeat = self.ledger.request_branch(request('mbot1', 'a'), 11.0)

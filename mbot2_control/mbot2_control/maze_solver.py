@@ -238,6 +238,7 @@ class MazeSolver(TeamMotionMixin, LineNavigationMixin, JunctionMappingMixin,
         self.wait_for_yellow_clear = False
         self.junction_count = 0
         self.branch_angle = 0.0
+        self.branch_target_yaw = None
         self.center_start = None
         self.center_heading = None
         self.turn_target = None
