@@ -5,6 +5,7 @@ import math
 from .config import (
     CARDINAL_DIRECTIONS,
     PEER_TIMEOUT_SECONDS,
+    JUNCTION_REACHED_M,
     direction_key,
 )
 
@@ -106,6 +107,46 @@ class BranchRoutesMixin:
                          not target_branch['visited_by'])
                 yield score, option, key, reason, task
 
+    def _waiting_choices(self, node, choices, robot, now, queued, inbound_key):
+        """Move toward a newer clear junction over confirmed links only."""
+        # An outstanding task may be unreachable from the offered exits.
+        # Wait for the graph or traffic to change instead of taking a detour.
+        if any(self._is_task(target, key, None, now)
+               for target in self.junctions.values() for key in target['branches']):
+            return
+
+        node_id = node['id']
+        targets = {
+            target['id'] for target in self.junctions.values()
+            if target['id'] > node_id and target['kind'] == 'JUNCTION'
+            and all(branch['status'] == 'BLOCKED' or branch.get('leads_to')
+                    for branch in target['branches'].values())
+            and not any(other != robot and self._live(other, now)
+                        and math.hypot(pose['x'] - target['x'], pose['y'] - target['y'])
+                        <= JUNCTION_REACHED_M for other, pose in self.robots.items())
+        }
+        if not targets:
+            return
+
+        for option, key in choices:
+            branch = node['branches'][key]
+            link = branch.get('leads_to')
+            if (link is None or branch['status'] == 'BLOCKED'
+                    or branch.get('hidden_by') not in (None, robot)
+                    or self._avoided(robot, node_id, key, now)
+                    or (queued and key == inbound_key)):
+                continue
+            neighbor = self.junctions.get(link['node'])
+            if neighbor is None or neighbor['id'] == node_id or neighbor['kind'] == 'START':
+                continue
+            distances = self._graph_distances(
+                [neighbor['id']], robot, now, skip_node=node_id, skip_start=True)
+            available = targets & distances.keys()
+            if available:
+                target = max(available)
+                first_leg = math.hypot(neighbor['x'] - node['x'], neighbor['y'] - node['y'])
+                yield (target, -first_leg - distances[target]), option, key
+
     def request_branch(self, report, now):
         robot = report['robot']
         request_id = report['request_id']
@@ -163,6 +204,11 @@ class BranchRoutesMixin:
                 if self.goal is not None:
                     reason = 'EXPLORE_GOAL_CONNECTION'
                 candidates.append((score, -len(candidates), option, key, reason, task))
+        if not candidates and self.goal is None:
+            for score, option, key in self._waiting_choices(
+                    node, choices, robot, now, queued, inbound_key):
+                candidates.append((score, -len(candidates), option, key,
+                                   'TOWARD_WAITING_JUNCTION', None))
         if not candidates:
             result = {'robot': robot, 'request_id': request_id,
                       'choice': None, 'junction_id': node['id'],

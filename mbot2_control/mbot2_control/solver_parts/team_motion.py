@@ -321,7 +321,7 @@ class TeamMotionMixin:
         return 0.0 < forward < ahead and lateral < side
 
     def _start_gate_closed(self):
-        """Leave the start box only once the robot in front reached a junction."""
+        """Wait for the lead robot to reach a junction or clear the launch lane."""
         if not self.team_enabled or self.start_gate_open:
             return False
         pose = self._world_pose()
@@ -342,9 +342,11 @@ class TeamMotionMixin:
         leader = self.team_peers.get(self.start_leader)
         if (leader is None or leader.get('junction_reached')
                 or leader.get('state') in (GOAL_PARKING, GOAL_REACHED)
+                or math.hypot(leader['x'] - pose[0], leader['y'] - pose[1])
+                >= START_LEADER_AHEAD_M
                 or time.monotonic() - self.start_gate_since > START_GATE_TIMEOUT_SECONDS):
             self.start_gate_open = True
-            self.get_logger().info(f'{self.start_leader} ถึงแยกแล้ว: ออกจากจุดเริ่ม')
+            self.get_logger().info(f'คิวหน้าเคลียร์: ออกจากจุดเริ่ม (ตามหลัง {self.start_leader})')
             return False
         return True
 

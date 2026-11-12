@@ -14,12 +14,14 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
 
+WORLD_NAME = 'Map1_FullyLined_16x16'
+
 ROBOTS = (
     # name, x (m), y (m), yaw (rad)
     # Robots queue on the single lead-in line inside the blue start box, facing +x into the maze.
-    ('mbot1', '-1.95', '-1.25', '0.0'),
-    ('mbot2', '-2.20', '-1.25', '0.0'),
-    ('mbot3', '-2.45', '-1.25', '0.0'),
+    ('mbot1', '-3.25', '3.00', '0.0'),
+    ('mbot2', '-3.50', '3.00', '0.0'),
+    ('mbot3', '-3.75', '3.00', '0.0'),
 )
 
 
@@ -91,7 +93,7 @@ def robot_actions(xacro_file, robot_name, x_position, y_position, yaw,
                     'use_sim_time': True,
                     'team_enabled': True,
                     'use_ground_truth': True,
-                    'world_name': 'mbot2_seed7_maze',
+                    'world_name': WORLD_NAME,
                     'spawn_x': float(x_position),
                     'spawn_y': float(y_position),
                     'spawn_yaw': float(yaw),
@@ -107,7 +109,7 @@ def bridge_arguments(robot_names, include_clock=False):
     """สร้างรายการ bridge ครบทุก topic สำหรับ mBot2 ทุกตัว."""
     arguments = ([
         '/clock@rosgraph_msgs/msg/Clock[ignition.msgs.Clock',
-        '/world/mbot2_seed7_maze/dynamic_pose/info@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V',
+        f'/world/{WORLD_NAME}/dynamic_pose/info@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V',
     ] if include_clock else [])
 
     for robot_name in robot_names:
@@ -149,7 +151,7 @@ def generate_launch_description():
 
     pkg_share = get_package_share_directory('mbot2_description')
     xacro_file = os.path.join(pkg_share, 'urdf', 'mbot2.urdf.xacro')
-    world_file = os.path.join(pkg_share, 'worlds', 'mbot2_seed7_maze.sdf')
+    world_file = os.path.join(pkg_share, 'worlds', 'Map1.sdf')
 
     set_sdf_path = SetEnvironmentVariable(
         'SDF_PATH',
@@ -183,7 +185,6 @@ def generate_launch_description():
                set_sdf_path, gazebo, gazebo_headless,
                Node(package='mbot2_control', executable='team_coordinator',
                     name='maze_team_coordinator', output='screen',
-                    # junctions in mbot2_seed7_maze sit on a 0.5 m grid
                     parameters=[{'junction_match_radius': 0.25}],
                     condition=IfCondition(start_controllers))]
     for index, robot in enumerate(ROBOTS):

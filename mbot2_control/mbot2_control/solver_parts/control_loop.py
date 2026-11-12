@@ -28,6 +28,7 @@ from .config import (
     ALIGN_TURN_GAIN,
     ALIGN_MAX_TURN,
     ALIGN_LOST_GRACE_SECONDS,
+    REACQUIRE_TIMEOUT_SECONDS,
     BRANCH_CAPTURE_SPEED,
     BRANCH_CAPTURE_IGNORE_M,
     BRANCH_CAPTURE_MAX_M,
@@ -585,7 +586,12 @@ class ControlLoopMixin:
                 self.cmd_pub.publish(cmd)
                 return
             else:
-                # Keep rotating until a sensor actually sees black; no fixed timeout.
+                # If the expected exit is not under the sensors, recover
+                # from the last known line pose instead of spinning here.
+                if now - self.state_start_time >= REACQUIRE_TIMEOUT_SECONDS:
+                    self._begin_line_recovery(self.line_search_after)
+                    self.cmd_pub.publish(cmd)
+                    return
                 cmd.angular.z = self.align_last_side * ROTATE_SPEED
                 if now - self.last_search_log_at >= SEARCH_LOG_SECONDS:
                     self.last_search_log_at = now

@@ -199,6 +199,7 @@ class LineNavigationMixin:
                   'TOWARD_UNEXPLORED': 'ไปหาแยกที่ยังมีทางไม่ได้สำรวจที่ใกล้ที่สุด',
                   'ASSIGNED_BRANCH': 'สำรวจกิ่งที่ทีมจองให้',
                   'TOWARD_ASSIGNED': 'ไปหางานที่ทีมจองให้',
+                  'TOWARD_WAITING_JUNCTION': 'ไปยังแยกที่สำรวจแล้วเพื่อรอรับงาน',
                   'TAKE_QUEUED_TASK': 'รับงานต่อจากหุ่นที่รออยู่ด้านหลัง',
                   }.get(choice.get('reason'), 'ทีมเลือกทาง')
         exit_cardinal = choice.get('exit_cardinal')
