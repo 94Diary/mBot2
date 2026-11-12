@@ -149,6 +149,7 @@ class TeamCoordinator(Node):
     def _publish_state(self):
         self._publish(self.state_pub, {
             **self.ledger.snapshot(time.monotonic()),
+            'map_frame': {'east': '+x', 'north': '+y', 'distance_unit': 'm'},
             'run_id': self.run_id,
             'run_started_at': self.run_started_at,
         })
