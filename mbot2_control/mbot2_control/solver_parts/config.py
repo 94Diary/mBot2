@@ -42,6 +42,7 @@ BRANCH_CAPTURE_MAX_M = 0.24
 PATH_COLOR_GRACE_M = 0.08
 YIELD_PATH_GAP_M = 0.35  # front RGB can cross a broad junction while reversing
 YIELD_LINE_END_M = 0.03  # black maze: two reversing ticks without black
+REACQUIRE_TIMEOUT_SECONDS = 2.0
 ANCHOR_ARRIVAL_M = 0.015  # RGB footprint is only centimetres wide
 ANCHOR_TRAVEL_SPEED = 0.10
 ANCHOR_TURN_SPEED = 0.65
