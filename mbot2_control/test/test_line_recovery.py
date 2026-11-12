@@ -63,6 +63,18 @@ class LineRecoveryTest(unittest.TestCase):
     def tearDown(self):
         self.node.destroy_node()
 
+    def test_reacquire_returns_to_last_known_line_after_timeout(self):
+        anchor = (-0.2, 0.0, 0.0)
+        self.node.last_centered_pose = anchor
+        self.node.line_search_after = maze_solver.FOLLOW
+        self.node._change_state(maze_solver.REACQUIRE)
+        self.node.state_start_time -= 3.0
+        self.robot.set_colours()
+        cmd = self.robot.tick()
+        self.assertEqual(maze_solver.LINE_LOST, self.node.state)
+        self.assertEqual(anchor, self.node.line_lost_anchor)
+        self.assertEqual(0.0, cmd.angular.z)
+
     def test_outer_sensor_on_junction_colour_confirms_side_branch(self):
         # New map: side arms near a junction are painted junction colour,
         # so the outer sensor sees that colour instead of black.

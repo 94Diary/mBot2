@@ -43,6 +43,26 @@ class TeamFrontierTest(unittest.TestCase):
         self.ledger.release_branch({'robot': robot, 'junction_id': node['id'],
                                     'direction': key, 'peer': peer}, now)
 
+    def test_idle_moves_to_newer_known_junction_then_waits(self):
+        start = self.node(-1, 0, 'START')
+        near, far = self.node(0, 0), self.node(1, 0)
+        self.join(start, EAST, near, WEST)
+        self.join(near, EAST, far, WEST)
+        result = self.ask('mbot1', near, 0.0, [WEST, EAST])
+        self.assertEqual('TOWARD_WAITING_JUNCTION', result['reason'])
+        self.assertEqual(EAST, result['direction'])
+        result = self.ask('mbot1', far, 0.0, [WEST])
+        self.assertEqual('WAIT_FOR_FRONTIER', result['reason'])
+        self.assertIsNone(result['choice'])
+
+    def test_idle_does_not_route_back_via_start(self):
+        near = self.node(0, 0)
+        start = self.node(-1, 0, 'START')
+        far = self.node(-2, 0)
+        self.join(start, EAST, near, WEST)
+        self.join(start, WEST, far, EAST)
+        self.assertIsNone(self.ask('mbot1', near, 0.0, [WEST])['choice'])
+
     def test_release_keeps_visited(self):
         j = self.node(0, 0)
         first = self.ask('mbot1', j, 0.0, [EAST, NORTH])

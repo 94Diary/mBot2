@@ -998,13 +998,13 @@ class BlackJunctionScanTest(unittest.TestCase):
         self.assertEqual(maze_solver.RETURNING, self.node.state)
         self.assertNotIn('RELEASE_BRANCH', [r.get('type') for r in self.reports])
 
-    def test_start_waits_for_far_leader_that_missed_a_junction(self):
-        # mbot0 drove past the first junction without stopping: still wait.
+    def test_start_goes_when_leader_clears_the_launch_lane(self):
+        # Long lead-ins can have several corners before the first junction.
         self.start_setup(self.leader(False))
         self.robot.tick()
         self.node.team_peers = {'mbot0': {**self.leader(False), 'x': 1.3}}
         self.robot.tick()
-        self.assertEqual(0.0, self.robot.sent[-1].linear.x)
+        self.assertGreater(self.robot.sent[-1].linear.x, 0.0)
 
     def test_start_goes_after_gate_timeout(self):
         self.start_setup(self.leader(False))

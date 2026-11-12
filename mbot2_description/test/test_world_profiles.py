@@ -23,7 +23,7 @@ def test_gazebo_name_comes_from_sdf():
 
 
 def test_map_spawns_on_start_plate():
-    assert world_profiles.resolve(WORLDS, 'Map1')['spawns'][0][1:3] == (-3.0, 3.0)
+    assert world_profiles.resolve(WORLDS, 'Map1')['spawns'][0][1:3] == (-3.25, 3.0)
 
 
 @pytest.mark.parametrize('bad', ['../x', 'nope', '', 'a b', 'Map1.sdf'])

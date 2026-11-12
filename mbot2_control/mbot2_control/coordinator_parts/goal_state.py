@@ -86,7 +86,7 @@ class GoalStateMixin:
                 return True
         return False
 
-    def _graph_distances(self, sources, robot, now, skip_node=None):
+    def _graph_distances(self, sources, robot, now, skip_node=None, *, skip_start=False):
         """Map distance from every node to the nearest of sources."""
         best = {source: 0.0 for source in sources}
         queue = [(0.0, source) for source in sources]
@@ -102,7 +102,8 @@ class GoalStateMixin:
                         or self._avoided(robot, node_id, key, now)):
                     continue
                 other = self.junctions.get(link['node'])
-                if other is None or other['id'] == skip_node:
+                if (other is None or other['id'] == skip_node
+                        or (skip_start and other['kind'] == 'START')):
                     continue
                 if branch.get('hidden_by') not in (None, robot):
                     continue
