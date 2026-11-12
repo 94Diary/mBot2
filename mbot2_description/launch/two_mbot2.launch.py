@@ -1,12 +1,13 @@
 """Launch two or three coordinated mBot2 robots in the branch maze."""
 
 import os
+import sys
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, GroupAction,
-                            IncludeLaunchDescription, SetEnvironmentVariable,
-                            TimerAction)
+                            IncludeLaunchDescription, OpaqueFunction,
+                            SetEnvironmentVariable, TimerAction)
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration, PythonExpression
@@ -14,13 +15,8 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
 
-ROBOTS = (
-    # name, x (m), y (m), yaw (rad)
-    # Robots queue on the single lead-in line inside the blue start box, facing +x into the maze.
-    ('mbot1', '-1.95', '-1.25', '0.0'),
-    ('mbot2', '-2.20', '-1.25', '0.0'),
-    ('mbot3', '-2.45', '-1.25', '0.0'),
-)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import world_profiles  # noqa: E402  (อยู่โฟลเดอร์เดียวกับ launch นี้)
 
 
 def robot_description(xacro_file, robot_name):
@@ -37,7 +33,7 @@ def robot_description(xacro_file, robot_name):
 
 
 def robot_actions(xacro_file, robot_name, x_position, y_position, yaw,
-                  start_controllers, delay_seconds):
+                  start_controllers, delay_seconds, world_name):
     """คืน launch actions สำหรับ model, TF publisher, spawn และ controller."""
     description = robot_description(xacro_file, robot_name)
 
@@ -68,13 +64,13 @@ def robot_actions(xacro_file, robot_name, x_position, y_position, yaw,
                 '-name',
                 robot_name,
                 '-x',
-                x_position,
+                str(x_position),
                 '-y',
-                y_position,
+                str(y_position),
                 '-z',
                 '0.06',
                 '-Y',
-                yaw,
+                str(yaw),
             ],
         ),
         TimerAction(
@@ -91,7 +87,7 @@ def robot_actions(xacro_file, robot_name, x_position, y_position, yaw,
                     'use_sim_time': True,
                     'team_enabled': True,
                     'use_ground_truth': True,
-                    'world_name': 'mbot2_seed7_maze',
+                    'world_name': world_name,
                     'spawn_x': float(x_position),
                     'spawn_y': float(y_position),
                     'spawn_yaw': float(yaw),
@@ -103,11 +99,11 @@ def robot_actions(xacro_file, robot_name, x_position, y_position, yaw,
     ]
 
 
-def bridge_arguments(robot_names, include_clock=False):
+def bridge_arguments(robot_names, include_clock=False, world_name='mbot2_seed7_maze'):
     """สร้างรายการ bridge ครบทุก topic สำหรับ mBot2 ทุกตัว."""
     arguments = ([
         '/clock@rosgraph_msgs/msg/Clock[ignition.msgs.Clock',
-        '/world/mbot2_seed7_maze/dynamic_pose/info@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V',
+        f'/world/{world_name}/dynamic_pose/info@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V',
     ] if include_clock else [])
 
     for robot_name in robot_names:
@@ -128,84 +124,75 @@ def bridge_arguments(robot_names, include_clock=False):
     return arguments
 
 
+def world_actions(context, start_controllers, headless, three_robots):
+    """สร้างส่วนที่ขึ้นกับสนาม หลังรู้ค่า world:= ตอนรันแล้ว."""
+    pkg_share = get_package_share_directory('mbot2_description')
+    xacro_file = os.path.join(pkg_share, 'urdf', 'mbot2.urdf.xacro')
+    world = world_profiles.resolve(
+        os.path.join(pkg_share, 'worlds'),
+        LaunchConfiguration('world').perform(context),
+    )
+    world_file = world['file']
+
+    def gazebo(args, condition):
+        return IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(os.path.join(
+                get_package_share_directory('ros_gz_sim'), 'launch', 'gz_sim.launch.py')),
+            launch_arguments={'gz_args': f'{args} {world_file}'}.items(),
+            condition=condition,
+        )
+
+    actions = [
+        gazebo('-r', UnlessCondition(headless)),
+        gazebo('-s -r', IfCondition(headless)),
+        Node(package='mbot2_control', executable='team_coordinator',
+             name='maze_team_coordinator', output='screen',
+             parameters=[{'junction_match_radius': world['junction_match_radius']}],
+             condition=IfCondition(start_controllers)),
+    ]
+    for index, robot in enumerate(world['spawns']):
+        devices = robot_actions(xacro_file, *robot, start_controllers,
+                                delay_seconds=index * 8.0, world_name=world['gz_name'])
+        if index == 2:
+            actions.append(GroupAction(devices, condition=three_robots))
+        else:
+            actions.extend(devices)
+
+    actions.append(Node(
+        package='ros_gz_bridge', executable='parameter_bridge',
+        name='two_mbot2_bridge', output='screen',
+        arguments=bridge_arguments(['mbot1', 'mbot2'], include_clock=True,
+                                   world_name=world['gz_name']),
+    ))
+    actions.append(GroupAction([
+        Node(package='ros_gz_bridge', executable='parameter_bridge',
+             name='third_mbot2_bridge', output='screen',
+             arguments=bridge_arguments(['mbot3']))], condition=three_robots))
+    return actions
+
+
 def generate_launch_description():
     """Create Gazebo, bridges, the coordinator and two/three robots."""
     start_controllers = LaunchConfiguration('start_controllers')
     robot_count = LaunchConfiguration('robot_count')
     headless = LaunchConfiguration('headless')
     three_robots = IfCondition(PythonExpression(["'", robot_count, "' == '3'"]))
-    declare_start_controllers = DeclareLaunchArgument(
-        'start_controllers',
-        default_value='true',
-        description='Start the coordinator and maze solvers automatically.',
-    )
-    declare_robot_count = DeclareLaunchArgument(
-        'robot_count', default_value='3', description='2 or 3 robots.',
-    )
-    declare_headless = DeclareLaunchArgument(
-        'headless', default_value='false',
-        description='Run Gazebo server without the 3-D window.',
-    )
-
     pkg_share = get_package_share_directory('mbot2_description')
-    xacro_file = os.path.join(pkg_share, 'urdf', 'mbot2.urdf.xacro')
-    world_file = os.path.join(pkg_share, 'worlds', 'mbot2_seed7_maze.sdf')
 
-    set_sdf_path = SetEnvironmentVariable(
-        'SDF_PATH',
-        os.path.join(pkg_share, 'worlds'),
-    )
-    gazebo = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(
-                get_package_share_directory('ros_gz_sim'),
-                'launch',
-                'gz_sim.launch.py',
-            )
-        ),
-        launch_arguments={'gz_args': f'-r {world_file}'}.items(),
-        condition=UnlessCondition(headless),
-    )
-    gazebo_headless = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(
-                get_package_share_directory('ros_gz_sim'),
-                'launch',
-                'gz_sim.launch.py',
-            )
-        ),
-        launch_arguments={'gz_args': f'-s -r {world_file}'}.items(),
-        condition=IfCondition(headless),
-    )
-
-    actions = [declare_start_controllers, declare_robot_count, declare_headless,
-               SetEnvironmentVariable('RCUTILS_CONSOLE_OUTPUT_FORMAT', '{severity} {name}: {message}'),
-               set_sdf_path, gazebo, gazebo_headless,
-               Node(package='mbot2_control', executable='team_coordinator',
-                    name='maze_team_coordinator', output='screen',
-                    # junctions in mbot2_seed7_maze sit on a 0.5 m grid
-                    parameters=[{'junction_match_radius': 0.25}],
-                    condition=IfCondition(start_controllers))]
-    for index, robot in enumerate(ROBOTS):
-        devices = robot_actions(xacro_file, *robot, start_controllers,
-                                delay_seconds=index * 8.0)
-        if index == 2:
-            actions.append(GroupAction(devices, condition=three_robots))
-        else:
-            actions.extend(devices)
-
-    actions.append(
-        Node(
-            package='ros_gz_bridge',
-            executable='parameter_bridge',
-            name='two_mbot2_bridge',
-            output='screen',
-            arguments=bridge_arguments(['mbot1', 'mbot2'], include_clock=True),
-        )
-    )
-    actions.append(GroupAction([
-        Node(package='ros_gz_bridge', executable='parameter_bridge',
-             name='third_mbot2_bridge', output='screen',
-             arguments=bridge_arguments(['mbot3']))], condition=three_robots))
-
-    return LaunchDescription(actions)
+    return LaunchDescription([
+        DeclareLaunchArgument(
+            'start_controllers', default_value='true',
+            description='Start the coordinator and maze solvers automatically.'),
+        DeclareLaunchArgument('robot_count', default_value='3', description='2 or 3 robots.'),
+        DeclareLaunchArgument(
+            'headless', default_value='false',
+            description='Run Gazebo server without the 3-D window.'),
+        DeclareLaunchArgument(
+            'world', default_value=world_profiles.DEFAULT_WORLD,
+            description='World file name in mbot2_description/worlds without .sdf '
+                        '(mbot2_seed7_maze, Map1, Map1_Walled, Map2).'),
+        SetEnvironmentVariable('RCUTILS_CONSOLE_OUTPUT_FORMAT', '{severity} {name}: {message}'),
+        SetEnvironmentVariable('SDF_PATH', os.path.join(pkg_share, 'worlds')),
+        OpaqueFunction(function=world_actions,
+                       args=[start_controllers, headless, three_robots]),
+    ])
