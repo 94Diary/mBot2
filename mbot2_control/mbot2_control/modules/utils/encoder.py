@@ -18,7 +18,7 @@ class WheelEncoder:
     def __init__(self, node):
         self.left_position = 0.0
         self.right_position = 0.0
-        node.create_subscription(JointState, '/joint_states', self._callback, 10)
+        node.create_subscription(JointState, 'joint_states', self._callback, 10)
 
     def _callback(self, msg: JointState):
         for name, position in zip(msg.name, msg.position):
